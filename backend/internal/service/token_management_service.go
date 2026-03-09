@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -16,10 +14,10 @@ import (
 
 const (
 	managedTokenEmailDomain    = "tokens.local"
-	managedTokenUsernamePrefix = "token_"
 	managedTokenNoteMarker     = "[token-management]"
 	managedTokenKeyNamePrefix  = "Token | "
 	maxTokenManagedListFetch   = 500
+	managedTokenUsernameMaxLen = 100
 )
 
 type ManagedToken struct {
@@ -80,7 +78,7 @@ func (s *TokenManagementService) List(ctx context.Context, page, pageSize int, f
 		PageSize: maxTokenManagedListFetch,
 	}, UserListFilters{
 		Role:                 RoleUser,
-		Search:               managedTokenUsernamePrefix,
+		Search:               managedTokenEmailDomain,
 		IncludeSubscriptions: &includeSubscriptions,
 	})
 	if err != nil {
@@ -165,14 +163,19 @@ func (s *TokenManagementService) Create(ctx context.Context, input *CreateManage
 		return nil, err
 	}
 
-	identifier, err := generateManagedTokenIdentifier()
+	username := managedTokenUsername(name)
+	email := username
+	exists, err := s.userRepo.ExistsByEmail(ctx, email)
 	if err != nil {
-		return nil, fmt.Errorf("generate token user identifier: %w", err)
+		return nil, fmt.Errorf("check managed token email exists: %w", err)
+	}
+	if exists {
+		return nil, ErrEmailExists
 	}
 
 	user := &User{
-		Email:       fmt.Sprintf("%s@%s", identifier, managedTokenEmailDomain),
-		Username:    managedTokenUsernamePrefix + identifier,
+		Email:       email,
+		Username:    username,
 		Notes:       buildManagedTokenNotes(name, input.Notes),
 		Role:        RoleUser,
 		Balance:     s.defaultUserBalance(ctx),
@@ -236,6 +239,41 @@ func (s *TokenManagementService) Create(ctx context.Context, input *CreateManage
 	}, nil
 }
 
+func (s *TokenManagementService) Delete(ctx context.Context, userID int64) error {
+	if userID <= 0 {
+		return infraerrors.BadRequest("TOKEN_ID_REQUIRED", "token id is required")
+	}
+
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !IsManagedTokenUser(user) {
+		return infraerrors.NotFound("TOKEN_NOT_FOUND", "managed token not found")
+	}
+
+	if s.subscriptionService != nil {
+		subscriptions, err := s.subscriptionService.ListUserSubscriptions(ctx, userID)
+		if err != nil {
+			return err
+		}
+		for i := range subscriptions {
+			if err := s.subscriptionService.RevokeSubscription(ctx, subscriptions[i].ID); err != nil {
+				return err
+			}
+		}
+	}
+
+	if s.apiKeyService != nil {
+		s.apiKeyService.InvalidateAuthCacheByUserID(ctx, userID)
+	}
+
+	if err := s.userRepo.Delete(ctx, userID); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *TokenManagementService) resolveTokenValue(customKey *string) (string, error) {
 	if customKey != nil {
 		trimmed := strings.TrimSpace(*customKey)
@@ -268,14 +306,6 @@ func (s *TokenManagementService) defaultUserConcurrency(ctx context.Context) int
 	return 1
 }
 
-func generateManagedTokenIdentifier() (string, error) {
-	buf := make([]byte, 6)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(buf), nil
-}
-
 func buildManagedTokenNotes(name, notes string) string {
 	parts := []string{managedTokenNoteMarker, "name=" + strings.TrimSpace(name)}
 	if trimmedNotes := strings.TrimSpace(notes); trimmedNotes != "" {
@@ -284,11 +314,25 @@ func buildManagedTokenNotes(name, notes string) string {
 	return strings.Join(parts, "\n")
 }
 
+func managedTokenUsername(name string) string {
+	trimmed := strings.TrimSpace(name)
+	suffix := "@" + managedTokenEmailDomain
+	maxLocalPartLen := managedTokenUsernameMaxLen - len([]rune(suffix))
+	if maxLocalPartLen > 0 {
+		runes := []rune(trimmed)
+		if len(runes) > maxLocalPartLen {
+			trimmed = string(runes[:maxLocalPartLen])
+		}
+	}
+	return trimmed + suffix
+}
+
+func managedTokenEmail(name string) string {
+	return managedTokenUsername(name)
+}
+
 func IsManagedTokenUser(user *User) bool {
 	if user == nil {
-		return false
-	}
-	if !strings.HasPrefix(strings.ToLower(user.Username), managedTokenUsernamePrefix) {
 		return false
 	}
 	if !strings.HasSuffix(strings.ToLower(user.Email), "@"+managedTokenEmailDomain) {

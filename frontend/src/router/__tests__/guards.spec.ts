@@ -52,6 +52,7 @@ interface MockAuthState {
   isAdmin: boolean
   isSimpleMode: boolean
   isAPIKeyLogin?: boolean
+  isManagedTokenUser?: boolean
 }
 
 /**
@@ -81,13 +82,13 @@ function simulateGuard(
     return '/login'
   }
 
-  if (authState.isAPIKeyLogin && toPath === '/keys') {
-    return authState.isAdmin ? '/admin/dashboard' : '/dashboard'
-  }
-
   // 需要管理员但不是管理员
   if (requiresAdmin && !authState.isAdmin) {
     return '/dashboard'
+  }
+
+  if (authState.isManagedTokenUser && toPath.startsWith('/keys')) {
+    return authState.isAdmin ? '/admin/dashboard' : '/dashboard'
   }
 
   // 简易模式限制
@@ -269,12 +270,23 @@ describe('路由守卫逻辑', () => {
       expect(redirect).toBeNull()
     })
 
-    it('API Key 登录访问 /keys 重定向到 /dashboard', () => {
+    it('API Key 登录访问 /keys 允许通过', () => {
       const authState: MockAuthState = {
         isAuthenticated: true,
         isAdmin: false,
         isSimpleMode: false,
         isAPIKeyLogin: true,
+      }
+      const redirect = simulateGuard('/keys', {}, authState)
+      expect(redirect).toBeNull()
+    })
+
+    it('令牌管理账号访问 /keys 重定向到 /dashboard', () => {
+      const authState: MockAuthState = {
+        isAuthenticated: true,
+        isAdmin: false,
+        isSimpleMode: false,
+        isManagedTokenUser: true,
       }
       const redirect = simulateGuard('/keys', {}, authState)
       expect(redirect).toBe('/dashboard')

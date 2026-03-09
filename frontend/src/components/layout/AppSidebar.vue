@@ -512,19 +512,11 @@ const ChevronDoubleRightIcon = {
     )
 }
 
-const filterApiKeyNavigation = (items: NavItem[]): NavItem[] => {
-  if (!authStore.isAPIKeyLogin) {
-    return items
-  }
-
-  return items.filter((item) => item.path !== '/keys')
-}
-
 // User navigation items (for regular users)
 const userNavItems = computed((): NavItem[] => {
   const items: NavItem[] = [
     { path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
-    { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
+    ...(!authStore.isManagedTokenUser ? [{ path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon }] : []),
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     ...(appStore.cachedPublicSettings?.sora_client_enabled
@@ -550,13 +542,13 @@ const userNavItems = computed((): NavItem[] => {
     })),
   ]
   const visibleItems = authStore.isSimpleMode ? items.filter(item => !item.hideInSimpleMode) : items
-  return filterApiKeyNavigation(visibleItems)
+  return visibleItems
 })
 
 // Personal navigation items (for admin's "My Account" section, without Dashboard)
 const personalNavItems = computed((): NavItem[] => {
   const items: NavItem[] = [
-    { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
+    ...(!authStore.isManagedTokenUser ? [{ path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon }] : []),
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     ...(appStore.cachedPublicSettings?.sora_client_enabled
@@ -582,7 +574,7 @@ const personalNavItems = computed((): NavItem[] => {
     })),
   ]
   const visibleItems = authStore.isSimpleMode ? items.filter(item => !item.hideInSimpleMode) : items
-  return filterApiKeyNavigation(visibleItems)
+  return visibleItems
 })
 
 // Custom menu items filtered by visibility
@@ -609,7 +601,9 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon, hideInSimpleMode: true },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
-    { path: '/admin/tokens', label: t('nav.tokenManagement'), icon: KeyIcon, hideInSimpleMode: true },
+    ...(adminSettingsStore.showTokenManagement
+      ? [{ path: '/admin/tokens', label: t('nav.tokenManagement'), icon: KeyIcon, hideInSimpleMode: true }]
+      : []),
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
@@ -621,7 +615,7 @@ const adminNavItems = computed((): NavItem[] => {
   // 简单模式下，在系统设置前插入 API密钥
   if (authStore.isSimpleMode) {
     const filtered = baseItems.filter(item => !item.hideInSimpleMode)
-    if (!authStore.isAPIKeyLogin) {
+    if (!authStore.isManagedTokenUser) {
       filtered.push({ path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon })
     }
     filtered.push({ path: '/admin/data-management', label: t('nav.dataManagement'), icon: DatabaseIcon })

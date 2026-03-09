@@ -47,6 +47,7 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   // Default open, but honor cached value to reduce UI flicker on first paint.
   const opsMonitoringEnabled = ref(readCachedBool('ops_monitoring_enabled_cached', true))
   const opsRealtimeMonitoringEnabled = ref(readCachedBool('ops_realtime_monitoring_enabled_cached', true))
+  const showTokenManagement = ref(readCachedBool('show_token_management_cached', false))
   const opsQueryModeDefault = ref(readCachedString('ops_query_mode_default_cached', 'auto'))
   const customMenuItems = ref<CustomMenuItem[]>([])
 
@@ -62,6 +63,9 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
 
       opsRealtimeMonitoringEnabled.value = settings.ops_realtime_monitoring_enabled ?? true
       writeCachedBool('ops_realtime_monitoring_enabled_cached', opsRealtimeMonitoringEnabled.value)
+
+      showTokenManagement.value = settings.show_token_management ?? false
+      writeCachedBool('show_token_management_cached', showTokenManagement.value)
 
       opsQueryModeDefault.value = settings.ops_query_mode_default || 'auto'
       writeCachedString('ops_query_mode_default_cached', opsQueryModeDefault.value)
@@ -87,6 +91,12 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   function setOpsRealtimeMonitoringEnabledLocal(value: boolean) {
     opsRealtimeMonitoringEnabled.value = value
     writeCachedBool('ops_realtime_monitoring_enabled_cached', value)
+    loaded.value = true
+  }
+
+  function setShowTokenManagementLocal(value: boolean) {
+    showTokenManagement.value = value
+    writeCachedBool('show_token_management_cached', value)
     loaded.value = true
   }
 
@@ -125,11 +135,13 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
     loading,
     opsMonitoringEnabled,
     opsRealtimeMonitoringEnabled,
+    showTokenManagement,
     opsQueryModeDefault,
     customMenuItems,
     fetch,
     setOpsMonitoringEnabledLocal,
     setOpsRealtimeMonitoringEnabledLocal,
+    setShowTokenManagementLocal,
     setOpsQueryModeDefaultLocal
   }
 })

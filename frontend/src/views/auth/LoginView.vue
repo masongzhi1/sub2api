@@ -6,11 +6,14 @@
           {{ t('auth.welcomeBack') }}
         </h2>
         <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
-          {{ isAPIKeyMode ? t('auth.apiKeyLoginHint') : t('auth.passwordLoginHint') }}
+          {{ loginHint }}
         </p>
       </div>
 
-      <div class="rounded-2xl border border-gray-200 bg-gray-50 p-1 dark:border-dark-700 dark:bg-dark-800/80">
+      <div
+        v-if="showApiKeyLogin"
+        class="rounded-2xl border border-gray-200 bg-gray-50 p-1 dark:border-dark-700 dark:bg-dark-800/80"
+      >
         <div class="grid grid-cols-2 gap-1">
           <button
             type="button"
@@ -27,10 +30,10 @@
           <button
             type="button"
             class="inline-flex min-h-[44px] items-center justify-center rounded-xl px-4 py-2 text-sm font-medium transition-colors"
-            :class="!isAPIKeyMode
+            :class="isPasswordMode
               ? 'bg-primary-600 text-white shadow-sm'
               : 'text-gray-600 hover:bg-white hover:text-gray-900 dark:text-dark-300 dark:hover:bg-dark-700 dark:hover:text-white'"
-            :aria-pressed="!isAPIKeyMode"
+            :aria-pressed="isPasswordMode"
             @click="switchLoginMode('password')"
           >
             <Icon name="mail" size="md" class="mr-2" />
@@ -40,11 +43,11 @@
       </div>
 
       <LinuxDoOAuthSection
-        v-if="!isAPIKeyMode && linuxdoOAuthEnabled"
+        v-if="isPasswordMode && linuxdoOAuthEnabled"
         :disabled="isLoading"
       />
 
-      <form @submit.prevent="handleLogin" class="space-y-5">
+      <form @submit.prevent="handlePrimaryAction" class="space-y-5">
         <div v-if="isAPIKeyMode">
           <label for="api_key" class="input-label">
             {{ t('auth.apiKeyLabel') }}
@@ -171,7 +174,7 @@
 
         <button
           type="submit"
-          :disabled="isLoading || (turnstileEnabled && !turnstileToken)"
+          :disabled="submitDisabled"
           class="btn btn-primary w-full"
         >
           <svg
@@ -194,8 +197,8 @@
               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
             ></path>
           </svg>
-          <Icon v-else :name="isAPIKeyMode ? 'key' : 'login'" size="md" class="mr-2" />
-          {{ isLoading ? t('auth.signingIn') : (isAPIKeyMode ? t('auth.signInWithApiKey') : t('auth.signIn')) }}
+          <Icon v-else :name="submitIcon" size="md" class="mr-2" />
+          {{ submitLabel }}
         </button>
       </form>
     </div>
@@ -225,7 +228,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
 import LinuxDoOAuthSection from '@/components/auth/LinuxDoOAuthSection.vue'
@@ -239,6 +242,7 @@ import type { LoginRequest, TotpLoginResponse } from '@/types'
 const { t } = useI18n()
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 
@@ -247,7 +251,8 @@ type LoginMode = 'api_key' | 'password'
 const isLoading = ref<boolean>(false)
 const errorMessage = ref<string>('')
 const showPassword = ref<boolean>(false)
-const loginMode = ref<LoginMode>('api_key')
+const loginMode = ref<LoginMode>('password')
+const showApiKeyLogin = ref<boolean>(false)
 
 const turnstileEnabled = ref<boolean>(false)
 const turnstileSiteKey = ref<string>('')
@@ -276,6 +281,31 @@ const errors = reactive({
 })
 
 const isAPIKeyMode = computed(() => loginMode.value === 'api_key')
+const isPasswordMode = computed(() => loginMode.value === 'password')
+const loginHint = computed(() => {
+  if (showApiKeyLogin.value && isAPIKeyMode.value) {
+    return t('auth.apiKeyLoginHint')
+  }
+  return t('auth.passwordLoginHint')
+})
+const submitIcon = computed(() => {
+  if (isAPIKeyMode.value) {
+    return 'key'
+  }
+  return 'login'
+})
+const submitLabel = computed(() => {
+  if (isLoading.value) {
+    return t('auth.signingIn')
+  }
+  if (isAPIKeyMode.value) {
+    return t('auth.signInWithApiKey')
+  }
+  return t('auth.signIn')
+})
+const submitDisabled = computed(() => {
+  return isLoading.value || (turnstileEnabled.value && !turnstileToken.value)
+})
 
 onMounted(async () => {
   const expiredFlag = sessionStorage.getItem('auth_expired')
@@ -292,6 +322,10 @@ onMounted(async () => {
     turnstileSiteKey.value = settings.turnstile_site_key || ''
     linuxdoOAuthEnabled.value = settings.linuxdo_oauth_enabled
     passwordResetEnabled.value = settings.password_reset_enabled
+    showApiKeyLogin.value = settings.show_token_management ?? false
+    if (!showApiKeyLogin.value) {
+      loginMode.value = 'password'
+    }
   } catch (error) {
     console.error('Failed to load public settings:', error)
   }
@@ -313,6 +347,10 @@ function onTurnstileError(): void {
 }
 
 function switchLoginMode(mode: LoginMode): void {
+  if (mode === 'api_key' && !showApiKeyLogin.value) {
+    return
+  }
+
   if (loginMode.value === mode) {
     return
   }
@@ -322,6 +360,7 @@ function switchLoginMode(mode: LoginMode): void {
   errors.apiKey = ''
   errors.email = ''
   errors.password = ''
+  errors.turnstile = ''
   showPassword.value = false
 }
 
@@ -364,7 +403,7 @@ function validateForm(): boolean {
   return isValid
 }
 
-async function handleLogin(): Promise<void> {
+async function handlePrimaryAction(): Promise<void> {
   errorMessage.value = ''
 
   if (!validateForm()) {
@@ -398,7 +437,7 @@ async function handleLogin(): Promise<void> {
 
     appStore.showSuccess(t('auth.loginSuccess'))
 
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
+    const redirectTo = (route.query.redirect as string) || '/dashboard'
     await router.push(redirectTo)
   } catch (error: unknown) {
     if (turnstileRef.value) {
@@ -432,7 +471,7 @@ async function handle2FAVerify(code: string): Promise<void> {
     show2FAModal.value = false
     appStore.showSuccess(t('auth.loginSuccess'))
 
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
+    const redirectTo = (route.query.redirect as string) || '/dashboard'
     await router.push(redirectTo)
   } catch (error: unknown) {
     const err = error as { message?: string; response?: { data?: { message?: string } } }

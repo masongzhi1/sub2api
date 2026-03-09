@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -72,6 +73,21 @@ func (h *TokenManagementHandler) Create(c *gin.Context) {
 	}
 
 	response.Success(c, managedTokenResponse(item))
+}
+
+func (h *TokenManagementHandler) Delete(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid token ID")
+		return
+	}
+
+	if err := h.tokenManagementService.Delete(c.Request.Context(), userID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{"message": "Token deleted successfully"})
 }
 
 func managedTokenResponse(item *service.ManagedToken) ManagedTokenResponse {

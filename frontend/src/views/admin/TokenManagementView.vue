@@ -115,6 +115,19 @@
             </span>
           </template>
 
+          <template #cell-actions="{ row }">
+            <div class="flex items-center justify-end">
+              <button
+                type="button"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                :title="t('common.delete')"
+                @click="handleDelete(row)"
+              >
+                <Icon name="trash" size="sm" />
+              </button>
+            </div>
+          </template>
+
           <template #empty>
             <EmptyState
               :title="t('admin.tokens.noTokensYet')"
@@ -137,6 +150,15 @@
         />
       </template>
     </TablePageLayout>
+
+    <ConfirmDialog
+      :show="showDeleteDialog"
+      :title="t('admin.tokens.deleteToken')"
+      :message="t('admin.tokens.deleteConfirm', { name: deletingToken?.label || '' })"
+      :danger="true"
+      @confirm="confirmDelete"
+      @cancel="showDeleteDialog = false"
+    />
 
     <BaseDialog
       :show="showCreateModal"
@@ -235,6 +257,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import Select from '@/components/common/Select.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
@@ -250,8 +273,10 @@ const subscriptionGroups = ref<AdminGroup[]>([])
 const loading = ref(false)
 const creating = ref(false)
 const showCreateModal = ref(false)
+const showDeleteDialog = ref(false)
 const search = ref('')
 const copiedKeyId = ref<number | null>(null)
+const deletingToken = ref<ManagedToken | null>(null)
 
 const pagination = reactive({
   page: 1,
@@ -274,7 +299,8 @@ const columns = computed<Column[]>(() => [
   { key: 'group', label: t('admin.tokens.columns.group') },
   { key: 'expires_at', label: t('admin.tokens.columns.expires') },
   { key: 'status', label: t('admin.tokens.columns.status') },
-  { key: 'created_at', label: t('admin.tokens.columns.created') }
+  { key: 'created_at', label: t('admin.tokens.columns.created') },
+  { key: 'actions', label: t('common.actions') }
 ])
 
 const groupOptions = computed(() => {
@@ -397,6 +423,32 @@ function handlePageSizeChange(pageSize: number): void {
   pagination.page = 1
   pagination.page_size = pageSize
   void loadTokens()
+}
+
+function handleDelete(token: ManagedToken): void {
+  deletingToken.value = token
+  showDeleteDialog.value = true
+}
+
+async function confirmDelete(): Promise<void> {
+  if (!deletingToken.value) {
+    return
+  }
+
+  try {
+    await adminAPI.tokenManagement.delete(deletingToken.value.user.id)
+    appStore.showSuccess(t('admin.tokens.deletedSuccess'))
+    showDeleteDialog.value = false
+    deletingToken.value = null
+
+    if (tokens.value.length === 1 && pagination.page > 1) {
+      pagination.page -= 1
+    }
+    await loadTokens()
+  } catch (error: any) {
+    console.error(error)
+    appStore.showError(error.response?.data?.detail || t('admin.tokens.failedToDelete'))
+  }
 }
 
 async function handleCreate(): Promise<void> {

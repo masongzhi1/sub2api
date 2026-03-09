@@ -18,7 +18,7 @@
     </div>
 
     <!-- API Keys -->
-    <div class="card p-4">
+    <div v-if="!authStore.isAPIKeyLogin" class="card p-4">
       <div class="flex items-center gap-3">
         <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30">
           <Icon name="key" size="md" class="text-blue-600 dark:text-blue-400" :stroke-width="2" />
@@ -135,6 +135,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/icons/Icon.vue'
 import type { UserDashboardStats as UserStatsType } from '@/api/usage'
 
@@ -144,6 +145,7 @@ defineProps<{
   isSimple: boolean
 }>()
 const { t } = useI18n()
+const authStore = useAuthStore()
 
 const formatBalance = (b: number) =>
   new Intl.NumberFormat('en-US', {

@@ -67,6 +67,9 @@ func RegisterAdminRoutes(
 		// 订阅管理
 		registerSubscriptionRoutes(admin, h)
 
+		// 令牌管理
+		registerTokenManagementRoutes(admin, h)
+
 		// 使用记录管理
 		registerUsageRoutes(admin, h)
 
@@ -459,6 +462,14 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 
 	// 用户下的订阅列表
 	admin.GET("/users/:id/subscriptions", h.Admin.Subscription.ListByUser)
+}
+
+func registerTokenManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	tokens := admin.Group("/token-management")
+	{
+		tokens.GET("", h.Admin.TokenManagement.List)
+		tokens.POST("", h.Admin.TokenManagement.Create)
+	}
 }
 
 func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

@@ -396,7 +396,7 @@ async function handleVerify(): Promise<void> {
     }
 
     // Register with verification code
-    await authStore.register({
+    const response = await authStore.register({
       email: email.value,
       password: password.value,
       verify_code: verifyCode.value.trim(),
@@ -409,10 +409,14 @@ async function handleVerify(): Promise<void> {
     sessionStorage.removeItem('register_data')
 
     // Show success toast
-    appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
+    appStore.showSuccess(
+      response.initial_api_key
+        ? t('auth.accountCreatedWithKeySuccess')
+        : t('auth.accountCreatedSuccess', { siteName: siteName.value })
+    )
 
-    // Redirect to dashboard
-    await router.push('/dashboard')
+    // Redirect to keys when an initial key is auto-created
+    await router.push(response.initial_api_key ? '/keys' : '/dashboard')
   } catch (error: unknown) {
     errorMessage.value = buildAuthErrorMessage(error, {
       fallback: t('auth.verifyFailed')

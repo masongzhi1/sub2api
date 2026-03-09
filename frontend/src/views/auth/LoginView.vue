@@ -1,93 +1,145 @@
 <template>
   <AuthLayout>
     <div class="space-y-6">
-      <!-- Title -->
       <div class="text-center">
         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
           {{ t('auth.welcomeBack') }}
         </h2>
         <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
-          {{ t('auth.signInToAccount') }}
+          {{ isAPIKeyMode ? t('auth.apiKeyLoginHint') : t('auth.passwordLoginHint') }}
         </p>
       </div>
 
-      <!-- LinuxDo Connect OAuth 登录 -->
-      <LinuxDoOAuthSection v-if="linuxdoOAuthEnabled" :disabled="isLoading" />
+      <div class="rounded-2xl border border-gray-200 bg-gray-50 p-1 dark:border-dark-700 dark:bg-dark-800/80">
+        <div class="grid grid-cols-2 gap-1">
+          <button
+            type="button"
+            class="inline-flex min-h-[44px] items-center justify-center rounded-xl px-4 py-2 text-sm font-medium transition-colors"
+            :class="isAPIKeyMode
+              ? 'bg-primary-600 text-white shadow-sm'
+              : 'text-gray-600 hover:bg-white hover:text-gray-900 dark:text-dark-300 dark:hover:bg-dark-700 dark:hover:text-white'"
+            :aria-pressed="isAPIKeyMode"
+            @click="switchLoginMode('api_key')"
+          >
+            <Icon name="key" size="md" class="mr-2" />
+            {{ t('auth.apiKeyTab') }}
+          </button>
+          <button
+            type="button"
+            class="inline-flex min-h-[44px] items-center justify-center rounded-xl px-4 py-2 text-sm font-medium transition-colors"
+            :class="!isAPIKeyMode
+              ? 'bg-primary-600 text-white shadow-sm'
+              : 'text-gray-600 hover:bg-white hover:text-gray-900 dark:text-dark-300 dark:hover:bg-dark-700 dark:hover:text-white'"
+            :aria-pressed="!isAPIKeyMode"
+            @click="switchLoginMode('password')"
+          >
+            <Icon name="mail" size="md" class="mr-2" />
+            {{ t('auth.passwordTab') }}
+          </button>
+        </div>
+      </div>
 
-      <!-- Login Form -->
+      <LinuxDoOAuthSection
+        v-if="!isAPIKeyMode && linuxdoOAuthEnabled"
+        :disabled="isLoading"
+      />
+
       <form @submit.prevent="handleLogin" class="space-y-5">
-        <!-- Email Input -->
-        <div>
-          <label for="email" class="input-label">
-            {{ t('auth.emailLabel') }}
+        <div v-if="isAPIKeyMode">
+          <label for="api_key" class="input-label">
+            {{ t('auth.apiKeyLabel') }}
           </label>
           <div class="relative">
             <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="mail" size="md" class="text-gray-400 dark:text-dark-500" />
+              <Icon name="key" size="md" class="text-gray-400 dark:text-dark-500" />
             </div>
             <input
-              id="email"
-              v-model="formData.email"
-              type="email"
-              required
-              autofocus
-              autocomplete="email"
+              id="api_key"
+              v-model="formData.apiKey"
+              type="text"
+              autocomplete="off"
               :disabled="isLoading"
-              class="input pl-11"
-              :class="{ 'input-error': errors.email }"
-              :placeholder="t('auth.emailPlaceholder')"
+              class="input pl-11 font-mono"
+              :class="{ 'input-error': errors.apiKey }"
+              :placeholder="t('auth.apiKeyPlaceholder')"
             />
           </div>
-          <p v-if="errors.email" class="input-error-text">
-            {{ errors.email }}
+          <p v-if="errors.apiKey" class="input-error-text">
+            {{ errors.apiKey }}
+          </p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('auth.apiKeyLoginNote') }}
           </p>
         </div>
 
-        <!-- Password Input -->
-        <div>
-          <label for="password" class="input-label">
-            {{ t('auth.passwordLabel') }}
-          </label>
-          <div class="relative">
-            <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
-              <Icon name="lock" size="md" class="text-gray-400 dark:text-dark-500" />
+        <template v-else>
+          <div>
+            <label for="email" class="input-label">
+              {{ t('auth.emailLabel') }}
+            </label>
+            <div class="relative">
+              <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
+                <Icon name="mail" size="md" class="text-gray-400 dark:text-dark-500" />
+              </div>
+              <input
+                id="email"
+                v-model="formData.email"
+                type="email"
+                autocomplete="email"
+                :disabled="isLoading"
+                class="input pl-11"
+                :class="{ 'input-error': errors.email }"
+                :placeholder="t('auth.emailPlaceholder')"
+              />
             </div>
-            <input
-              id="password"
-              v-model="formData.password"
-              :type="showPassword ? 'text' : 'password'"
-              required
-              autocomplete="current-password"
-              :disabled="isLoading"
-              class="input pl-11 pr-11"
-              :class="{ 'input-error': errors.password }"
-              :placeholder="t('auth.passwordPlaceholder')"
-            />
-            <button
-              type="button"
-              @click="showPassword = !showPassword"
-              class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
-            >
-              <Icon v-if="showPassword" name="eyeOff" size="md" />
-              <Icon v-else name="eye" size="md" />
-            </button>
-          </div>
-          <div class="mt-1 flex items-center justify-between">
-            <p v-if="errors.password" class="input-error-text">
-              {{ errors.password }}
+            <p v-if="errors.email" class="input-error-text">
+              {{ errors.email }}
             </p>
-            <span v-else></span>
-            <router-link
-              v-if="passwordResetEnabled"
-              to="/forgot-password"
-              class="text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
-            >
-              {{ t('auth.forgotPassword') }}
-            </router-link>
           </div>
-        </div>
 
-        <!-- Turnstile Widget -->
+          <div>
+            <label for="password" class="input-label">
+              {{ t('auth.passwordLabel') }}
+            </label>
+            <div class="relative">
+              <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5">
+                <Icon name="lock" size="md" class="text-gray-400 dark:text-dark-500" />
+              </div>
+              <input
+                id="password"
+                v-model="formData.password"
+                :type="showPassword ? 'text' : 'password'"
+                autocomplete="current-password"
+                :disabled="isLoading"
+                class="input pl-11 pr-11"
+                :class="{ 'input-error': errors.password }"
+                :placeholder="t('auth.passwordPlaceholder')"
+              />
+              <button
+                type="button"
+                @click="showPassword = !showPassword"
+                class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-dark-300"
+              >
+                <Icon v-if="showPassword" name="eyeOff" size="md" />
+                <Icon v-else name="eye" size="md" />
+              </button>
+            </div>
+            <div class="mt-1 flex items-center justify-between">
+              <p v-if="errors.password" class="input-error-text">
+                {{ errors.password }}
+              </p>
+              <span v-else></span>
+              <router-link
+                v-if="passwordResetEnabled"
+                to="/forgot-password"
+                class="text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+              >
+                {{ t('auth.forgotPassword') }}
+              </router-link>
+            </div>
+          </div>
+        </template>
+
         <div v-if="turnstileEnabled && turnstileSiteKey">
           <TurnstileWidget
             ref="turnstileRef"
@@ -101,7 +153,6 @@
           </p>
         </div>
 
-        <!-- Error Message -->
         <transition name="fade">
           <div
             v-if="errorMessage"
@@ -118,7 +169,6 @@
           </div>
         </transition>
 
-        <!-- Submit Button -->
         <button
           type="submit"
           :disabled="isLoading || (turnstileEnabled && !turnstileToken)"
@@ -144,13 +194,12 @@
               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
             ></path>
           </svg>
-          <Icon v-else name="login" size="md" class="mr-2" />
-          {{ isLoading ? t('auth.signingIn') : t('auth.signIn') }}
+          <Icon v-else :name="isAPIKeyMode ? 'key' : 'login'" size="md" class="mr-2" />
+          {{ isLoading ? t('auth.signingIn') : (isAPIKeyMode ? t('auth.signInWithApiKey') : t('auth.signIn')) }}
         </button>
       </form>
     </div>
 
-    <!-- Footer -->
     <template #footer>
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.dontHaveAccount') }}
@@ -164,7 +213,6 @@
     </template>
   </AuthLayout>
 
-  <!-- 2FA Modal -->
   <TotpLoginModal
     v-if="show2FAModal"
     ref="totpModalRef"
@@ -176,7 +224,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
@@ -186,50 +234,48 @@ import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/TurnstileWidget.vue'
 import { useAuthStore, useAppStore } from '@/stores'
 import { getPublicSettings, isTotp2FARequired } from '@/api/auth'
-import type { TotpLoginResponse } from '@/types'
+import type { LoginRequest, TotpLoginResponse } from '@/types'
 
 const { t } = useI18n()
-
-// ==================== Router & Stores ====================
 
 const router = useRouter()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 
-// ==================== State ====================
+type LoginMode = 'api_key' | 'password'
 
 const isLoading = ref<boolean>(false)
 const errorMessage = ref<string>('')
 const showPassword = ref<boolean>(false)
+const loginMode = ref<LoginMode>('api_key')
 
-// Public settings
 const turnstileEnabled = ref<boolean>(false)
 const turnstileSiteKey = ref<string>('')
 const linuxdoOAuthEnabled = ref<boolean>(false)
 const passwordResetEnabled = ref<boolean>(false)
 
-// Turnstile
 const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
 const turnstileToken = ref<string>('')
 
-// 2FA state
 const show2FAModal = ref<boolean>(false)
 const totpTempToken = ref<string>('')
 const totpUserEmailMasked = ref<string>('')
 const totpModalRef = ref<InstanceType<typeof TotpLoginModal> | null>(null)
 
 const formData = reactive({
+  apiKey: '',
   email: '',
   password: ''
 })
 
 const errors = reactive({
+  apiKey: '',
   email: '',
   password: '',
   turnstile: ''
 })
 
-// ==================== Lifecycle ====================
+const isAPIKeyMode = computed(() => loginMode.value === 'api_key')
 
 onMounted(async () => {
   const expiredFlag = sessionStorage.getItem('auth_expired')
@@ -251,8 +297,6 @@ onMounted(async () => {
   }
 })
 
-// ==================== Turnstile Handlers ====================
-
 function onTurnstileVerify(token: string): void {
   turnstileToken.value = token
   errors.turnstile = ''
@@ -268,35 +312,50 @@ function onTurnstileError(): void {
   errors.turnstile = t('auth.turnstileFailed')
 }
 
-// ==================== Validation ====================
+function switchLoginMode(mode: LoginMode): void {
+  if (loginMode.value === mode) {
+    return
+  }
+
+  loginMode.value = mode
+  errorMessage.value = ''
+  errors.apiKey = ''
+  errors.email = ''
+  errors.password = ''
+  showPassword.value = false
+}
 
 function validateForm(): boolean {
-  // Reset errors
+  errors.apiKey = ''
   errors.email = ''
   errors.password = ''
   errors.turnstile = ''
 
   let isValid = true
 
-  // Email validation
-  if (!formData.email.trim()) {
-    errors.email = t('auth.emailRequired')
-    isValid = false
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-    errors.email = t('auth.invalidEmail')
-    isValid = false
+  if (isAPIKeyMode.value) {
+    if (!formData.apiKey.trim()) {
+      errors.apiKey = t('auth.apiKeyRequired')
+      isValid = false
+    }
+  } else {
+    if (!formData.email.trim()) {
+      errors.email = t('auth.emailRequired')
+      isValid = false
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      errors.email = t('auth.invalidEmail')
+      isValid = false
+    }
+
+    if (!formData.password) {
+      errors.password = t('auth.passwordRequired')
+      isValid = false
+    } else if (formData.password.length < 6) {
+      errors.password = t('auth.passwordMinLength')
+      isValid = false
+    }
   }
 
-  // Password validation
-  if (!formData.password) {
-    errors.password = t('auth.passwordRequired')
-    isValid = false
-  } else if (formData.password.length < 6) {
-    errors.password = t('auth.passwordMinLength')
-    isValid = false
-  }
-
-  // Turnstile validation
   if (turnstileEnabled.value && !turnstileToken.value) {
     errors.turnstile = t('auth.completeVerification')
     isValid = false
@@ -305,13 +364,9 @@ function validateForm(): boolean {
   return isValid
 }
 
-// ==================== Form Handlers ====================
-
 async function handleLogin(): Promise<void> {
-  // Clear previous error
   errorMessage.value = ''
 
-  // Validate form
   if (!validateForm()) {
     return
   }
@@ -319,14 +374,19 @@ async function handleLogin(): Promise<void> {
   isLoading.value = true
 
   try {
-    // Call auth store login
-    const response = await authStore.login({
-      email: formData.email,
-      password: formData.password,
-      turnstile_token: turnstileEnabled.value ? turnstileToken.value : undefined
-    })
+    const payload: LoginRequest = isAPIKeyMode.value
+      ? {
+          api_key: formData.apiKey.trim(),
+          turnstile_token: turnstileEnabled.value ? turnstileToken.value : undefined
+        }
+      : {
+          email: formData.email.trim(),
+          password: formData.password,
+          turnstile_token: turnstileEnabled.value ? turnstileToken.value : undefined
+        }
 
-    // Check if 2FA is required
+    const response = await authStore.login(payload)
+
     if (isTotp2FARequired(response)) {
       const totpResponse = response as TotpLoginResponse
       totpTempToken.value = totpResponse.temp_token || ''
@@ -336,20 +396,16 @@ async function handleLogin(): Promise<void> {
       return
     }
 
-    // Show success toast
     appStore.showSuccess(t('auth.loginSuccess'))
 
-    // Redirect to dashboard or intended route
     const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
     await router.push(redirectTo)
   } catch (error: unknown) {
-    // Reset Turnstile on error
     if (turnstileRef.value) {
       turnstileRef.value.reset()
       turnstileToken.value = ''
     }
 
-    // Handle login error
     const err = error as { message?: string; response?: { data?: { detail?: string } } }
 
     if (err.response?.data?.detail) {
@@ -360,14 +416,11 @@ async function handleLogin(): Promise<void> {
       errorMessage.value = t('auth.loginFailed')
     }
 
-    // Also show error toast
     appStore.showError(errorMessage.value)
   } finally {
     isLoading.value = false
   }
 }
-
-// ==================== 2FA Handlers ====================
 
 async function handle2FAVerify(code: string): Promise<void> {
   if (totpModalRef.value) {
@@ -376,12 +429,9 @@ async function handle2FAVerify(code: string): Promise<void> {
 
   try {
     await authStore.login2FA(totpTempToken.value, code)
-
-    // Close modal and show success
     show2FAModal.value = false
     appStore.showSuccess(t('auth.loginSuccess'))
 
-    // Redirect to dashboard or intended route
     const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
     await router.push(redirectTo)
   } catch (error: unknown) {

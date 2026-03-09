@@ -51,6 +51,7 @@ interface MockAuthState {
   isAuthenticated: boolean
   isAdmin: boolean
   isSimpleMode: boolean
+  isAPIKeyLogin?: boolean
 }
 
 /**
@@ -78,6 +79,10 @@ function simulateGuard(
   // 需要认证但未登录
   if (!authState.isAuthenticated) {
     return '/login'
+  }
+
+  if (authState.isAPIKeyLogin && toPath === '/keys') {
+    return authState.isAdmin ? '/admin/dashboard' : '/dashboard'
   }
 
   // 需要管理员但不是管理员
@@ -262,6 +267,17 @@ describe('路由守卫逻辑', () => {
       }
       const redirect = simulateGuard('/keys', {}, authState)
       expect(redirect).toBeNull()
+    })
+
+    it('API Key 登录访问 /keys 重定向到 /dashboard', () => {
+      const authState: MockAuthState = {
+        isAuthenticated: true,
+        isAdmin: false,
+        isSimpleMode: false,
+        isAPIKeyLogin: true,
+      }
+      const redirect = simulateGuard('/keys', {}, authState)
+      expect(redirect).toBe('/dashboard')
     })
   })
 })

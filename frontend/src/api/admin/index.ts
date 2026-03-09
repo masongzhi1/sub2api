@@ -22,6 +22,7 @@ import opsAPI from './ops'
 import errorPassthroughAPI from './errorPassthrough'
 import dataManagementAPI from './dataManagement'
 import apiKeysAPI from './apiKeys'
+import tokenManagementAPI from './tokenManagement'
 import scheduledTestsAPI from './scheduledTests'
 
 /**
@@ -39,6 +40,7 @@ export const adminAPI = {
   settings: settingsAPI,
   system: systemAPI,
   subscriptions: subscriptionsAPI,
+  tokenManagement: tokenManagementAPI,
   usage: usageAPI,
   gemini: geminiAPI,
   antigravity: antigravityAPI,
@@ -70,6 +72,7 @@ export {
   errorPassthroughAPI,
   dataManagementAPI,
   apiKeysAPI,
+  tokenManagementAPI,
   scheduledTestsAPI
 }
 

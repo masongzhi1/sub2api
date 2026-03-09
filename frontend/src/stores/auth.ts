@@ -12,8 +12,11 @@ const AUTH_TOKEN_KEY = 'auth_token'
 const AUTH_USER_KEY = 'auth_user'
 const REFRESH_TOKEN_KEY = 'refresh_token'
 const TOKEN_EXPIRES_AT_KEY = 'token_expires_at' // 存储过期时间戳而非有效期
+const AUTH_LOGIN_METHOD_KEY = 'auth_login_method'
 const AUTO_REFRESH_INTERVAL = 60 * 1000 // 60 seconds for user data refresh
 const TOKEN_REFRESH_BUFFER = 120 * 1000 // 120 seconds before expiry to refresh token
+
+type LoginMethod = 'password' | 'api_key'
 
 export const useAuthStore = defineStore('auth', () => {
   // ==================== State ====================
@@ -22,6 +25,8 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(null)
   const refreshTokenValue = ref<string | null>(null)
   const tokenExpiresAt = ref<number | null>(null) // 过期时间戳（毫秒）
+  const loginMethod = ref<LoginMethod>('password')
+  const pendingLoginMethod = ref<LoginMethod | null>(null)
   const runMode = ref<'standard' | 'simple'>('standard')
   let refreshIntervalId: ReturnType<typeof setInterval> | null = null
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
@@ -37,6 +42,7 @@ export const useAuthStore = defineStore('auth', () => {
   })
 
   const isSimpleMode = computed(() => runMode.value === 'simple')
+  const isAPIKeyLogin = computed(() => loginMethod.value === 'api_key')
 
   // ==================== Actions ====================
 
@@ -50,6 +56,7 @@ export const useAuthStore = defineStore('auth', () => {
     const savedUser = localStorage.getItem(AUTH_USER_KEY)
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
     const savedExpiresAt = localStorage.getItem(TOKEN_EXPIRES_AT_KEY)
+    const savedLoginMethod = localStorage.getItem(AUTH_LOGIN_METHOD_KEY)
 
     if (savedToken && savedUser) {
       try {
@@ -57,6 +64,7 @@ export const useAuthStore = defineStore('auth', () => {
         user.value = JSON.parse(savedUser)
         refreshTokenValue.value = savedRefreshToken
         tokenExpiresAt.value = savedExpiresAt ? parseInt(savedExpiresAt, 10) : null
+        loginMethod.value = savedLoginMethod === 'api_key' ? 'api_key' : 'password'
 
         // Immediately refresh user data from backend (async, don't block)
         refreshUser().catch((error) => {
@@ -182,16 +190,19 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if login fails
    */
   async function login(credentials: LoginRequest): Promise<LoginResponse> {
+    const currentLoginMethod: LoginMethod = credentials.api_key ? 'api_key' : 'password'
+
     try {
       const response = await authAPI.login(credentials)
 
       // If 2FA is required, return the response without setting auth state
       if (isTotp2FARequired(response)) {
+        pendingLoginMethod.value = currentLoginMethod
         return response
       }
 
       // Set auth state from the response
-      setAuthFromResponse(response)
+      setAuthFromResponse(response, currentLoginMethod)
 
       return response
     } catch (error) {
@@ -209,9 +220,11 @@ export const useAuthStore = defineStore('auth', () => {
    * @throws Error if 2FA verification fails
    */
   async function login2FA(tempToken: string, totpCode: string): Promise<User> {
+    const resolvedLoginMethod = pendingLoginMethod.value ?? 'password'
+
     try {
       const response = await authAPI.login2FA({ temp_token: tempToken, totp_code: totpCode })
-      setAuthFromResponse(response)
+      setAuthFromResponse(response, resolvedLoginMethod)
       return user.value!
     } catch (error) {
       clearAuth()
@@ -223,7 +236,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Set auth state from an AuthResponse
    * Internal helper function
    */
-  function setAuthFromResponse(response: AuthResponse): void {
+  function setAuthFromResponse(response: AuthResponse, resolvedLoginMethod: LoginMethod = 'password'): void {
     // Store token and user
     token.value = response.access_token
 
@@ -243,6 +256,9 @@ export const useAuthStore = defineStore('auth', () => {
     // Persist to localStorage
     localStorage.setItem(AUTH_TOKEN_KEY, response.access_token)
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
+    loginMethod.value = resolvedLoginMethod
+    pendingLoginMethod.value = null
+    localStorage.setItem(AUTH_LOGIN_METHOD_KEY, resolvedLoginMethod)
 
     // Start auto-refresh interval for user data
     startAutoRefresh()
@@ -260,14 +276,14 @@ export const useAuthStore = defineStore('auth', () => {
    * @returns Promise resolving to the newly registered and authenticated user
    * @throws Error if registration fails
    */
-  async function register(userData: RegisterRequest): Promise<User> {
+  async function register(userData: RegisterRequest): Promise<AuthResponse> {
     try {
       const response = await authAPI.register(userData)
 
       // Use the common helper to set auth state
-      setAuthFromResponse(response)
+      setAuthFromResponse(response, 'password')
 
-      return user.value!
+      return response
     } catch (error) {
       // Clear any partial state on error
       clearAuth()
@@ -289,7 +305,10 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
 
     token.value = newToken
+    loginMethod.value = 'password'
+    pendingLoginMethod.value = null
     localStorage.setItem(AUTH_TOKEN_KEY, newToken)
+    localStorage.setItem(AUTH_LOGIN_METHOD_KEY, 'password')
 
     // Read refresh token and expires_at from localStorage if set by OAuth callback
     const savedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
@@ -376,11 +395,14 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     refreshTokenValue.value = null
     tokenExpiresAt.value = null
+    loginMethod.value = 'password'
+    pendingLoginMethod.value = null
     user.value = null
     localStorage.removeItem(AUTH_TOKEN_KEY)
     localStorage.removeItem(AUTH_USER_KEY)
     localStorage.removeItem(REFRESH_TOKEN_KEY)
     localStorage.removeItem(TOKEN_EXPIRES_AT_KEY)
+    localStorage.removeItem(AUTH_LOGIN_METHOD_KEY)
   }
 
   // ==================== Return Store API ====================
@@ -389,12 +411,14 @@ export const useAuthStore = defineStore('auth', () => {
     // State
     user,
     token,
+    loginMethod: readonly(loginMethod),
     runMode: readonly(runMode),
 
     // Computed
     isAuthenticated,
     isAdmin,
     isSimpleMode,
+    isAPIKeyLogin,
 
     // Actions
     login,

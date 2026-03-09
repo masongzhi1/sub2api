@@ -1,11 +1,16 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"log/slog"
+	"net/mail"
+	"sort"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -19,6 +24,7 @@ type AuthHandler struct {
 	cfg           *config.Config
 	authService   *service.AuthService
 	userService   *service.UserService
+	apiKeyService *service.APIKeyService
 	settingSvc    *service.SettingService
 	promoService  *service.PromoService
 	redeemService *service.RedeemService
@@ -26,17 +32,22 @@ type AuthHandler struct {
 }
 
 // NewAuthHandler creates a new AuthHandler
-func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userService *service.UserService, settingService *service.SettingService, promoService *service.PromoService, redeemService *service.RedeemService, totpService *service.TotpService) *AuthHandler {
+func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userService *service.UserService, apiKeyService *service.APIKeyService, settingService *service.SettingService, promoService *service.PromoService, redeemService *service.RedeemService, totpService *service.TotpService) *AuthHandler {
 	return &AuthHandler{
 		cfg:           cfg,
 		authService:   authService,
 		userService:   userService,
+		apiKeyService: apiKeyService,
 		settingSvc:    settingService,
 		promoService:  promoService,
 		redeemService: redeemService,
 		totpService:   totpService,
 	}
 }
+
+const defaultInitialAPIKeyName = "Default Key"
+
+var errInvalidManagedTokenAPIKey = infraerrors.Unauthorized("INVALID_API_KEY", "invalid API key")
 
 // RegisterRequest represents the registration request payload
 type RegisterRequest struct {
@@ -62,23 +73,25 @@ type SendVerifyCodeResponse struct {
 
 // LoginRequest represents the login request payload
 type LoginRequest struct {
-	Email          string `json:"email" binding:"required,email"`
-	Password       string `json:"password" binding:"required"`
+	Email          string `json:"email"`
+	Password       string `json:"password"`
+	APIKey         string `json:"api_key"`
 	TurnstileToken string `json:"turnstile_token"`
 }
 
 // AuthResponse 认证响应格式（匹配前端期望）
 type AuthResponse struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token,omitempty"` // 新增：Refresh Token
-	ExpiresIn    int       `json:"expires_in,omitempty"`    // 新增：Access Token有效期（秒）
-	TokenType    string    `json:"token_type"`
-	User         *dto.User `json:"user"`
+	AccessToken   string      `json:"access_token"`
+	RefreshToken  string      `json:"refresh_token,omitempty"` // 新增：Refresh Token
+	ExpiresIn     int         `json:"expires_in,omitempty"`    // 新增：Access Token有效期（秒）
+	TokenType     string      `json:"token_type"`
+	User          *dto.User   `json:"user"`
+	InitialAPIKey *dto.APIKey `json:"initial_api_key,omitempty"`
 }
 
 // respondWithTokenPair 生成 Token 对并返回认证响应
 // 如果 Token 对生成失败，回退到只返回 Access Token（向后兼容）
-func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
+func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User, initialAPIKey *service.APIKey) {
 	tokenPair, err := h.authService.GenerateTokenPair(c.Request.Context(), user, "")
 	if err != nil {
 		slog.Error("failed to generate token pair", "error", err, "user_id", user.ID)
@@ -89,19 +102,122 @@ func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
 			return
 		}
 		response.Success(c, AuthResponse{
-			AccessToken: token,
-			TokenType:   "Bearer",
-			User:        dto.UserFromService(user),
+			AccessToken:   token,
+			TokenType:     "Bearer",
+			User:          dto.UserFromService(user),
+			InitialAPIKey: dto.APIKeyFromService(initialAPIKey),
 		})
 		return
 	}
 	response.Success(c, AuthResponse{
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		ExpiresIn:    tokenPair.ExpiresIn,
-		TokenType:    "Bearer",
-		User:         dto.UserFromService(user),
+		AccessToken:   tokenPair.AccessToken,
+		RefreshToken:  tokenPair.RefreshToken,
+		ExpiresIn:     tokenPair.ExpiresIn,
+		TokenType:     "Bearer",
+		User:          dto.UserFromService(user),
+		InitialAPIKey: dto.APIKeyFromService(initialAPIKey),
 	})
+}
+
+func (h *AuthHandler) createInitialAPIKey(ctx context.Context, userID int64) (*service.APIKey, error) {
+	if h.apiKeyService == nil || userID <= 0 {
+		return nil, nil
+	}
+
+	var groupID *int64
+	if h.settingSvc == nil || !h.settingSvc.IsUngroupedKeySchedulingAllowed(ctx) {
+		availableGroups, err := h.apiKeyService.GetAvailableGroups(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		groupID = chooseInitialAPIKeyGroupID(availableGroups)
+		if groupID == nil {
+			return nil, nil
+		}
+	}
+
+	return h.apiKeyService.Create(ctx, userID, service.CreateAPIKeyRequest{
+		Name:    defaultInitialAPIKeyName,
+		GroupID: groupID,
+	})
+}
+
+func chooseInitialAPIKeyGroupID(groups []service.Group) *int64 {
+	if len(groups) == 0 {
+		return nil
+	}
+
+	sortedGroups := append([]service.Group(nil), groups...)
+	sort.Slice(sortedGroups, func(i, j int) bool {
+		leftIsSubscription := sortedGroups[i].IsSubscriptionType()
+		rightIsSubscription := sortedGroups[j].IsSubscriptionType()
+		if leftIsSubscription != rightIsSubscription {
+			return leftIsSubscription
+		}
+		if sortedGroups[i].SortOrder != sortedGroups[j].SortOrder {
+			return sortedGroups[i].SortOrder < sortedGroups[j].SortOrder
+		}
+		return sortedGroups[i].ID < sortedGroups[j].ID
+	})
+
+	groupID := sortedGroups[0].ID
+	return &groupID
+}
+
+func (h *AuthHandler) authenticateManagedTokenAPIKey(ctx context.Context, rawKey string) (*service.User, error) {
+	key := strings.TrimSpace(rawKey)
+	if key == "" {
+		return nil, errInvalidManagedTokenAPIKey
+	}
+	if h.apiKeyService == nil || h.userService == nil {
+		return nil, service.ErrServiceUnavailable
+	}
+
+	apiKey, err := h.apiKeyService.GetByKey(ctx, key)
+	if err != nil {
+		if errors.Is(err, service.ErrAPIKeyNotFound) {
+			return nil, errInvalidManagedTokenAPIKey
+		}
+		slog.Error("managed token api key login failed", "error", err)
+		return nil, service.ErrServiceUnavailable
+	}
+
+	user, err := h.userService.GetByID(ctx, apiKey.UserID)
+	if err != nil {
+		if errors.Is(err, service.ErrUserNotFound) {
+			return nil, errInvalidManagedTokenAPIKey
+		}
+		slog.Error("managed token user lookup failed", "error", err, "api_key_id", apiKey.ID, "user_id", apiKey.UserID)
+		return nil, service.ErrServiceUnavailable
+	}
+
+	if !service.IsManagedTokenUser(user) {
+		return nil, errInvalidManagedTokenAPIKey
+	}
+	if !user.IsActive() {
+		return nil, service.ErrUserNotActive
+	}
+
+	return user, nil
+}
+
+func (h *AuthHandler) completeLogin(c *gin.Context, user *service.User) {
+	if h.totpService != nil && h.settingSvc != nil && h.settingSvc.IsTotpEnabled(c.Request.Context()) && user.TotpEnabled {
+		tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
+		if err != nil {
+			response.InternalError(c, "Failed to create 2FA session")
+			return
+		}
+
+		response.Success(c, TotpLoginResponse{
+			Requires2FA:     true,
+			TempToken:       tempToken,
+			UserEmailMasked: service.MaskEmail(user.Email),
+		})
+		return
+	}
+
+	h.respondWithTokenPair(c, user, nil)
 }
 
 // Register handles user registration
@@ -125,7 +241,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	h.respondWithTokenPair(c, user)
+	initialAPIKey, keyErr := h.createInitialAPIKey(c.Request.Context(), user.ID)
+	if keyErr != nil {
+		slog.Error("failed to create initial api key after registration", "error", keyErr, "user_id", user.ID)
+	}
+
+	h.respondWithTokenPair(c, user, initialAPIKey)
 }
 
 // SendVerifyCode 发送邮箱验证码
@@ -164,37 +285,41 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Turnstile 验证
 	if err := h.authService.VerifyTurnstile(c.Request.Context(), req.TurnstileToken, ip.GetClientIP(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	token, user, err := h.authService.Login(c.Request.Context(), req.Email, req.Password)
+	var (
+		user *service.User
+		err  error
+	)
+
+	if strings.TrimSpace(req.APIKey) != "" {
+		user, err = h.authenticateManagedTokenAPIKey(c.Request.Context(), req.APIKey)
+	} else {
+		email := strings.TrimSpace(req.Email)
+		if email == "" {
+			response.BadRequest(c, "Email is required")
+			return
+		}
+		if _, parseErr := mail.ParseAddress(email); parseErr != nil {
+			response.BadRequest(c, "Invalid email")
+			return
+		}
+		if strings.TrimSpace(req.Password) == "" {
+			response.BadRequest(c, "Password is required")
+			return
+		}
+
+		_, user, err = h.authService.Login(c.Request.Context(), email, req.Password)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	_ = token // token 由 authService.Login 返回但此处由 respondWithTokenPair 重新生成
 
-	// Check if TOTP 2FA is enabled for this user
-	if h.totpService != nil && h.settingSvc.IsTotpEnabled(c.Request.Context()) && user.TotpEnabled {
-		// Create a temporary login session for 2FA
-		tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
-		if err != nil {
-			response.InternalError(c, "Failed to create 2FA session")
-			return
-		}
-
-		response.Success(c, TotpLoginResponse{
-			Requires2FA:     true,
-			TempToken:       tempToken,
-			UserEmailMasked: service.MaskEmail(user.Email),
-		})
-		return
-	}
-
-	h.respondWithTokenPair(c, user)
+	h.completeLogin(c, user)
 }
 
 // TotpLoginResponse represents the response when 2FA is required
@@ -260,7 +385,7 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		return
 	}
 
-	h.respondWithTokenPair(c, user)
+	h.respondWithTokenPair(c, user, nil)
 }
 
 // GetCurrentUser handles getting current authenticated user

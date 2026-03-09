@@ -51,8 +51,9 @@ export interface AdminUser extends User {
 }
 
 export interface LoginRequest {
-  email: string
-  password: string
+  email?: string
+  password?: string
+  api_key?: string
   turnstile_token?: string
 }
 
@@ -115,6 +116,7 @@ export interface AuthResponse {
   expires_in?: number     // New: Access Token expiry time in seconds
   token_type: string
   user: User & { run_mode?: 'standard' | 'simple' }
+  initial_api_key?: ApiKey
 }
 
 export interface CurrentUserResponse extends User {
@@ -1209,6 +1211,21 @@ export interface UserSubscription {
   expires_at: string | null
   user?: User
   group?: Group
+}
+
+export interface ManagedToken {
+  label: string
+  user: AdminUser
+  api_key: ApiKey
+  subscription?: UserSubscription | null
+}
+
+export interface CreateManagedTokenRequest {
+  name: string
+  group_id: number
+  validity_days?: number
+  custom_key?: string
+  notes?: string
 }
 
 export interface SubscriptionProgress {

@@ -700,7 +700,7 @@ async function handleRegister(): Promise<void> {
     }
 
     // Otherwise, directly register
-    await authStore.register({
+    const response = await authStore.register({
       email: formData.email,
       password: formData.password,
       turnstile_token: turnstileEnabled.value ? turnstileToken.value : undefined,
@@ -709,10 +709,14 @@ async function handleRegister(): Promise<void> {
     })
 
     // Show success toast
-    appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
+    appStore.showSuccess(
+      response.initial_api_key
+        ? t('auth.accountCreatedWithKeySuccess')
+        : t('auth.accountCreatedSuccess', { siteName: siteName.value })
+    )
 
-    // Redirect to dashboard
-    await router.push('/dashboard')
+    // Redirect to keys when an initial key is auto-created
+    await router.push(response.initial_api_key ? '/keys' : '/dashboard')
   } catch (error: unknown) {
     // Reset Turnstile on error
     if (turnstileRef.value) {

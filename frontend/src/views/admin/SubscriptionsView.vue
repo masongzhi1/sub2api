@@ -2,8 +2,11 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
-        <!-- Top Toolbar: Left (search + filters) / Right (actions) -->
-        <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="space-y-4">
+          <TokenManagementTabs />
+
+          <!-- Top Toolbar: Left (search + filters) / Right (actions) -->
+          <div class="flex flex-wrap items-start justify-between gap-4">
           <!-- Left: Fuzzy user search + filters (wrap to multiple lines) -->
           <div class="flex flex-1 flex-wrap items-center gap-3">
             <!-- User Search -->
@@ -149,6 +152,7 @@
               {{ t('admin.subscriptions.assignSubscription') }}
             </button>
           </div>
+        </div>
         </div>
       </template>
 
@@ -641,6 +645,7 @@ import Select from '@/components/common/Select.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import Icon from '@/components/icons/Icon.vue'
+import TokenManagementTabs from '@/components/admin/token-management/TokenManagementTabs.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()

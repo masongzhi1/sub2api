@@ -291,6 +291,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/tokens',
+    name: 'AdminTokenManagement',
+    component: () => import('@/views/admin/TokenManagementView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Token Management',
+      titleKey: 'admin.tokens.title',
+      descriptionKey: 'admin.tokens.description'
+    }
+  },
+  {
     path: '/admin/accounts',
     name: 'AdminAccounts',
     component: () => import('@/views/admin/AccountsView.vue'),
@@ -478,6 +490,11 @@ router.beforeEach((to, _from, next) => {
       path: '/login',
       query: { redirect: to.fullPath } // Save intended destination
     })
+    return
+  }
+
+  if (authStore.isAPIKeyLogin && to.path === '/keys') {
+    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
     return
   }
 

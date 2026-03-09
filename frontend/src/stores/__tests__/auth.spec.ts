@@ -103,6 +103,16 @@ describe('useAuthStore', () => {
       expect(store.token).toBeNull()
       expect(store.isAuthenticated).toBe(false)
     })
+
+    it('API Key 登录后持久化登录方式并标记为 API Key 登录', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+
+      await store.login({ api_key: 'sk-managed-token' })
+
+      expect(store.isAPIKeyLogin).toBe(true)
+      expect(localStorage.getItem('auth_login_method')).toBe('api_key')
+    })
   })
 
   // --- login2FA ---
@@ -121,6 +131,18 @@ describe('useAuthStore', () => {
         temp_token: 'temp-123',
         totp_code: '654321',
       })
+    })
+
+    it('API Key 登录经过 2FA 后仍保留 API Key 登录状态', async () => {
+      mockLogin.mockResolvedValue({ requires_2fa: true, temp_token: 'temp-123' })
+      mockLogin2FA.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+
+      await store.login({ api_key: 'sk-managed-token' })
+      await store.login2FA('temp-123', '654321')
+
+      expect(store.isAPIKeyLogin).toBe(true)
+      expect(localStorage.getItem('auth_login_method')).toBe('api_key')
     })
 
     it('2FA 验证失败时清除状态并抛出错误', async () => {
@@ -156,6 +178,20 @@ describe('useAuthStore', () => {
       expect(localStorage.getItem('refresh_token')).toBeNull()
       expect(localStorage.getItem('token_expires_at')).toBeNull()
     })
+
+    it('注销后清除登录方式持久化', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      mockLogout.mockResolvedValue(undefined)
+      const store = useAuthStore()
+
+      await store.login({ api_key: 'sk-managed-token' })
+      expect(localStorage.getItem('auth_login_method')).toBe('api_key')
+
+      await store.logout()
+
+      expect(store.isAPIKeyLogin).toBe(false)
+      expect(localStorage.getItem('auth_login_method')).toBeNull()
+    })
   })
 
   // --- checkAuth ---
@@ -174,6 +210,18 @@ describe('useAuthStore', () => {
       expect(store.token).toBe('saved-token')
       expect(store.user).toEqual(fakeUser)
       expect(store.isAuthenticated).toBe(true)
+    })
+
+    it('从 localStorage 恢复 API Key 登录方式', () => {
+      localStorage.setItem('auth_token', 'saved-token')
+      localStorage.setItem('auth_user', JSON.stringify(fakeUser))
+      localStorage.setItem('auth_login_method', 'api_key')
+      mockGetCurrentUser.mockResolvedValue({ data: fakeUser })
+
+      const store = useAuthStore()
+      store.checkAuth()
+
+      expect(store.isAPIKeyLogin).toBe(true)
     })
 
     it('localStorage 无数据时保持未认证状态', () => {

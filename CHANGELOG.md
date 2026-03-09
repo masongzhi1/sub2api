@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-03-09 - v0.1.95
+
+### Added
+- 新增 `deploy/docker-compose.build-local.yml`，支持使用本地源码构建镜像后通过 compose 启动。
+- 新增 `deploy/docker-compose.ha.yml`，提供 `sub2api-b` 第二实例（1456）用于双实例部署。
+- 新增 `deploy/restart-zero-downtime.sh`，支持 `sub2api-b -> sub2api` 滚动无中断重启。
+- 新增根目录 `AGENTS.md`，记录本地构建启动、重启与巡检命令。
+
+### Changed
+- `ai.xyyamsz.cn` 反代上游切换为双后端（1455/1456）负载与故障切换。
+- 统一双实例健康检查为 `wget`，避免本地镜像缺少 `curl` 导致误判 `unhealthy`。
+
 ## 2026-03-09 - v0.1.94
 
 ### Added

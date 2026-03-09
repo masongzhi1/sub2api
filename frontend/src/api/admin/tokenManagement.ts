@@ -27,9 +27,15 @@ export async function create(request: CreateManagedTokenRequest): Promise<Manage
   return data
 }
 
+export async function deleteToken(id: number): Promise<{ message: string }> {
+  const { data } = await apiClient.delete<{ message: string }>(`/admin/token-management/${id}`)
+  return data
+}
+
 export const tokenManagementAPI = {
   list,
-  create
+  create,
+  delete: deleteToken
 }
 
 export default tokenManagementAPI

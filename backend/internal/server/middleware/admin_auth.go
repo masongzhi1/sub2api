@@ -4,11 +4,17 @@ package middleware
 import (
 	"crypto/subtle"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	adminAuthMethodAPIKey = "admin_api_key"
+	adminAuthMethodJWT    = "jwt"
 )
 
 // NewAdminAuthMiddleware 创建管理员认证中间件
@@ -146,7 +152,7 @@ func validateAdminAPIKey(
 		Concurrency: admin.Concurrency,
 	})
 	c.Set(string(ContextKeyUserRole), admin.Role)
-	c.Set("auth_method", "admin_api_key")
+	c.Set("auth_method", adminAuthMethodAPIKey)
 	return true
 }
 
@@ -198,7 +204,19 @@ func validateJWTForAdmin(
 		Concurrency: user.Concurrency,
 	})
 	c.Set(string(ContextKeyUserRole), user.Role)
-	c.Set("auth_method", "jwt")
+	c.Set("auth_method", adminAuthMethodJWT)
 
 	return true
+}
+
+// RequireAdminJWT 仅允许管理员通过 JWT 会话访问当前接口。
+func RequireAdminJWT() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authMethod, _ := c.Get("auth_method")
+		if method, ok := authMethod.(string); ok && method == adminAuthMethodAPIKey {
+			AbortWithError(c, http.StatusForbidden, "ADMIN_JWT_REQUIRED", "Admin JWT required")
+			return
+		}
+		c.Next()
+	}
 }

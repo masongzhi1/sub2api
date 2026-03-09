@@ -39,6 +39,7 @@ vi.mock('@/stores/auth', () => ({
     isAdmin: false,
     isSimpleMode: false,
     isAPIKeyLogin: false,
+    isManagedTokenUser: false,
     checkAuth: vi.fn()
   })
 }))

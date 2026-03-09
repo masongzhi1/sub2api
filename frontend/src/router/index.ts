@@ -493,15 +493,15 @@ router.beforeEach((to, _from, next) => {
     return
   }
 
-  if (authStore.isAPIKeyLogin && to.path === '/keys') {
-    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-    return
-  }
-
   // Check admin requirement
   if (requiresAdmin && !authStore.isAdmin) {
     // User is authenticated but not admin, redirect to user dashboard
     next('/dashboard')
+    return
+  }
+
+  if (authStore.isManagedTokenUser && to.path.startsWith('/keys')) {
+    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
     return
   }
 

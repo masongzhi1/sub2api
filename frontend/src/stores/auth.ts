@@ -43,6 +43,11 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isSimpleMode = computed(() => runMode.value === 'simple')
   const isAPIKeyLogin = computed(() => loginMethod.value === 'api_key')
+  const isManagedTokenUser = computed(() => {
+    const email = user.value?.email?.trim().toLowerCase() ?? ''
+    const username = user.value?.username?.trim().toLowerCase() ?? ''
+    return email.endsWith('@tokens.local') && username === email
+  })
 
   // ==================== Actions ====================
 
@@ -419,6 +424,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     isSimpleMode,
     isAPIKeyLogin,
+    isManagedTokenUser,
 
     // Actions
     login,

@@ -18,7 +18,7 @@
     </div>
 
     <!-- API Keys -->
-    <div v-if="!authStore.isAPIKeyLogin" class="card p-4">
+    <div v-if="!authStore.isAPIKeyLogin && !authStore.isManagedTokenUser" class="card p-4">
       <div class="flex items-center gap-3">
         <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30">
           <Icon name="key" size="md" class="text-blue-600 dark:text-blue-400" :stroke-width="2" />

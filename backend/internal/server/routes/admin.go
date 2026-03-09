@@ -468,7 +468,8 @@ func registerTokenManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) 
 	tokens := admin.Group("/token-management")
 	{
 		tokens.GET("", h.Admin.TokenManagement.List)
-		tokens.POST("", h.Admin.TokenManagement.Create)
+		tokens.POST("", middleware.RequireAdminJWT(), h.Admin.TokenManagement.Create)
+		tokens.DELETE("/:id", h.Admin.TokenManagement.Delete)
 	}
 }
 

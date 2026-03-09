@@ -26,19 +26,25 @@
 
       <template #actions>
         <div class="flex justify-end gap-3">
-        <button
-          @click="loadApiKeys"
-          :disabled="loading"
-          class="btn btn-secondary"
-          :title="t('common.refresh')"
-        >
-          <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-        </button>
-        <button @click="showCreateModal = true" class="btn btn-primary" data-tour="keys-create-btn">
-          <Icon name="plus" size="md" class="mr-2" />
-          {{ t('keys.createKey') }}
-        </button>
-      </div>
+          <button
+            @click="loadApiKeys"
+            :disabled="loading"
+            class="btn btn-secondary"
+            :title="t('common.refresh')"
+          >
+            <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+          </button>
+          <button
+            @click="openCreateModal"
+            :disabled="!canCreateApiKeys"
+            class="btn btn-primary"
+            :title="!canCreateApiKeys ? createApiKeysDisabledReason : undefined"
+            data-tour="keys-create-btn"
+          >
+            <Icon name="plus" size="md" class="mr-2" />
+            {{ t('keys.createKey') }}
+          </button>
+        </div>
       </template>
 
       <template #table>
@@ -349,9 +355,9 @@
           <template #empty>
             <EmptyState
               :title="t('keys.noKeysYet')"
-              :description="t('keys.createFirstKey')"
-              :action-text="t('keys.createKey')"
-              @action="showCreateModal = true"
+              :description="canCreateApiKeys ? t('keys.createFirstKey') : createApiKeysUnavailableMessage"
+              :action-text="canCreateApiKeys ? t('keys.createKey') : undefined"
+              @action="openCreateModal"
             />
           </template>
         </DataTable>
@@ -1033,6 +1039,7 @@
 	import { ref, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
+	import { useAuthStore } from '@/stores/auth'
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
 
@@ -1074,6 +1081,7 @@ interface GroupOption {
 }
 
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 
@@ -1113,6 +1121,19 @@ const filterGroupId = ref<string | number>('')
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
+const canCreateApiKeys = computed(() => !authStore.isAPIKeyLogin && !authStore.isManagedTokenUser)
+
+const createApiKeysDisabledReason = computed(() => {
+  if (authStore.isManagedTokenUser) return t('keys.createDisabledForManagedTokenUser')
+  if (authStore.isAPIKeyLogin) return t('keys.createDisabledForApiKeyLogin')
+  return ''
+})
+
+const createApiKeysUnavailableMessage = computed(() => {
+  if (authStore.isManagedTokenUser) return t('keys.createUnavailableForManagedTokenUser')
+  if (authStore.isAPIKeyLogin) return t('keys.createUnavailableEmptyState')
+  return ''
+})
 const showDeleteDialog = ref(false)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
@@ -1330,6 +1351,15 @@ const loadPublicSettings = async () => {
   }
 }
 
+const openCreateModal = () => {
+  if (!canCreateApiKeys.value) {
+    appStore.showWarning(createApiKeysDisabledReason.value)
+    return
+  }
+
+  showCreateModal.value = true
+}
+
 const openUseKeyModal = (key: ApiKey) => {
   selectedKey.value = key
   showUseKeyModal.value = true
@@ -1450,6 +1480,11 @@ const confirmDelete = (key: ApiKey) => {
 }
 
 const handleSubmit = async () => {
+  if (!showEditModal.value && !canCreateApiKeys.value) {
+    appStore.showWarning(t('keys.createDisabledForApiKeyLogin'))
+    return
+  }
+
   // Validate group_id is required
   if (formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))

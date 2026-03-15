@@ -1047,6 +1047,39 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	return selected, nil
 }
 
+// IsRequestedModelSupported checks whether the requested model can be matched
+// by at least one schedulable OpenAI account in the target group.
+// If no account defines model_mapping, it returns true (legacy pass-through).
+func (s *OpenAIGatewayService) IsRequestedModelSupported(ctx context.Context, groupID *int64, requestedModel string) (bool, error) {
+	model := strings.TrimSpace(requestedModel)
+	if model == "" {
+		return true, nil
+	}
+
+	accounts, err := s.listSchedulableAccounts(ctx, groupID)
+	if err != nil {
+		return false, fmt.Errorf("query accounts failed: %w", err)
+	}
+	if len(accounts) == 0 {
+		return false, nil
+	}
+
+	hasAnyMapping := false
+	for i := range accounts {
+		if len(accounts[i].GetModelMapping()) > 0 {
+			hasAnyMapping = true
+			if accounts[i].IsModelSupported(model) {
+				return true, nil
+			}
+		}
+	}
+
+	if !hasAnyMapping {
+		return true, nil
+	}
+	return false, nil
+}
+
 // tryStickySessionHit 尝试从粘性会话获取账号。
 // 如果命中且账号可用则返回账号；如果账号不可用则清理会话并返回 nil。
 //
@@ -1578,9 +1611,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	if passthroughEnabled {
-		// 透传分支只需要轻量提取字段，避免热路径全量 Unmarshal。
-		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, reqModel)
-		return s.forwardOpenAIPassthrough(ctx, c, account, originalBody, reqModel, reasoningEffort, reqStream, startTime)
+		upstreamBody, _, enforceErr := enforceOpenAIUpstreamRequestBytes(originalBody)
+		if enforceErr != nil {
+			return nil, fmt.Errorf("enforce OpenAI passthrough upstream request: %w", enforceErr)
+		}
+		normalizedUpstreamBody, _, normalizeErr := normalizeOpenAIUpstreamInputBytes(upstreamBody)
+		if normalizeErr != nil {
+			return nil, fmt.Errorf("normalize OpenAI passthrough upstream input: %w", normalizeErr)
+		}
+		upstreamBody = normalizedUpstreamBody
+		reasoningEffort := forcedOpenAIReasoningEffortPtr()
+		return s.forwardOpenAIPassthrough(ctx, c, account, upstreamBody, reqModel, reasoningEffort, reqStream, startTime)
 	}
 
 	reqBody, err := getOpenAIRequestBodyMap(c, body)
@@ -1659,37 +1700,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		markPatchSet("instructions", "You are a helpful coding assistant.")
 	}
 
-	// 对所有请求执行模型映射（包含 Codex CLI）。
-	mappedModel := account.GetMappedModel(reqModel)
-	if mappedModel != reqModel {
-		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Model mapping applied: %s -> %s (account: %s, isCodexCLI: %v)", reqModel, mappedModel, account.Name, isCodexCLI)
-		reqBody["model"] = mappedModel
-		bodyModified = true
-		markPatchSet("model", mappedModel)
-	}
-
-	// 针对所有 OpenAI 账号执行 Codex 模型名规范化，确保上游识别一致。
-	if model, ok := reqBody["model"].(string); ok {
-		normalizedModel := normalizeCodexModel(model)
-		if normalizedModel != "" && normalizedModel != model {
-			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Codex model normalization: %s -> %s (account: %s, type: %s, isCodexCLI: %v)",
-				model, normalizedModel, account.Name, account.Type, isCodexCLI)
-			reqBody["model"] = normalizedModel
-			mappedModel = normalizedModel
-			bodyModified = true
-			markPatchSet("model", normalizedModel)
-		}
-	}
-
-	// 规范化 reasoning.effort 参数（minimal -> none），与上游允许值对齐。
-	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
-		if effort, ok := reasoning["effort"].(string); ok && effort == "minimal" {
-			reasoning["effort"] = "none"
-			bodyModified = true
-			markPatchSet("reasoning.effort", "none")
-			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized reasoning.effort: minimal -> none (account: %s)", account.Name)
-		}
-	}
+	mappedModel := forcedOpenAIUpstreamModel
 
 	if account.Type == AccountTypeOAuth {
 		codexResult := applyCodexOAuthTransform(reqBody, isCodexCLI, isOpenAIResponsesCompactPath(c))
@@ -1704,6 +1715,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			promptCacheKey = codexResult.PromptCacheKey
 		}
 	}
+	if enforceOpenAIUpstreamRequestMap(reqBody) {
+		bodyModified = true
+		disablePatch()
+	}
+	if normalizeOpenAIUpstreamInputMap(reqBody) {
+		bodyModified = true
+		disablePatch()
+	}
+	mappedModel = forcedOpenAIUpstreamModel
 
 	// Handle max_output_tokens based on platform and account type
 	if !isCodexCLI {
@@ -2082,7 +2102,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	reasoningEffort := extractOpenAIReasoningEffort(reqBody, originalModel)
 	serviceTier := extractOpenAIServiceTier(reqBody)
-
 	return &OpenAIForwardResult{
 		RequestID:       resp.Header.Get("x-request-id"),
 		Usage:           *usage,
@@ -2371,6 +2390,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	}
 	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
 		req.Header.Set("user-agent", codexCLIUserAgent)
+	}
+	// APIKey 透传在 ForceCodexCLI 下补齐 originator，兼容仅接受 Codex 头语义的中继上游。
+	if req.Header.Get("originator") == "" && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+		req.Header.Set("originator", "codex_cli_rs")
 	}
 	// OAuth 安全透传：对非 Codex UA 统一兜底，降低被上游风控拦截概率。
 	if account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
@@ -2752,6 +2775,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// 用于网关未透传/改写 User-Agent 时，仍能命中 Codex 侧识别逻辑。
 	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
 		req.Header.Set("user-agent", codexCLIUserAgent)
+	}
+	// APIKey 上游（含 relay）在 Codex 场景下同样需要 originator，避免被判定为非 Codex 客户端。
+	if req.Header.Get("originator") == "" && (isCodexCLI || (s.cfg != nil && s.cfg.Gateway.ForceCodexCLI)) {
+		req.Header.Set("originator", resolveOpenAIUpstreamOriginator(c, true))
 	}
 
 	// Ensure required headers exist
@@ -3684,6 +3711,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
 	}
+	usageModel := strings.TrimSpace(result.Model)
+	if usageModel == "" {
+		usageModel = billingModel
+	}
 	cost, err := s.billingService.CalculateCostWithServiceTier(billingModel, tokens, multiplier, serviceTier)
 	if err != nil {
 		cost = &CostBreakdown{ActualCost: 0}
@@ -3704,7 +3735,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		APIKeyID:              apiKey.ID,
 		AccountID:             account.ID,
 		RequestID:             result.RequestID,
-		Model:                 billingModel,
+		Model:                 usageModel,
 		ServiceTier:           result.ServiceTier,
 		ReasoningEffort:       result.ReasoningEffort,
 		InputTokens:           actualInputTokens,
@@ -4211,7 +4242,7 @@ func getOpenAIRequestBodyMap(c *gin.Context, body []byte) (map[string]any, error
 	if c != nil {
 		if cached, ok := c.Get(OpenAIParsedRequestBodyKey); ok {
 			if reqBody, ok := cached.(map[string]any); ok && reqBody != nil {
-				return reqBody, nil
+				return cloneOpenAIRequestBodyMap(reqBody)
 			}
 		}
 	}
@@ -4223,7 +4254,22 @@ func getOpenAIRequestBodyMap(c *gin.Context, body []byte) (map[string]any, error
 	if c != nil {
 		c.Set(OpenAIParsedRequestBodyKey, reqBody)
 	}
-	return reqBody, nil
+	return cloneOpenAIRequestBodyMap(reqBody)
+}
+
+func cloneOpenAIRequestBodyMap(src map[string]any) (map[string]any, error) {
+	if src == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(src)
+	if err != nil {
+		return nil, fmt.Errorf("clone request body encode: %w", err)
+	}
+	var cloned map[string]any
+	if err := json.Unmarshal(encoded, &cloned); err != nil {
+		return nil, fmt.Errorf("clone request body decode: %w", err)
+	}
+	return cloned, nil
 }
 
 func extractOpenAIReasoningEffort(reqBody map[string]any, requestedModel string) *string {

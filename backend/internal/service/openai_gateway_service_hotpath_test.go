@@ -116,6 +116,31 @@ func TestGetOpenAIRequestBodyMap_UsesContextCache(t *testing.T) {
 	got, err := getOpenAIRequestBodyMap(c, []byte(`{invalid-json`))
 	require.NoError(t, err)
 	require.Equal(t, cached, got)
+	got["model"] = "mutated-model"
+	require.Equal(t, "cached-model", cached["model"])
+}
+
+func TestGetOpenAIRequestBodyMap_CachedMapMutationDoesNotPolluteContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	cached := map[string]any{"model": "gpt-5.4", "stream": false}
+	c.Set(OpenAIParsedRequestBodyKey, cached)
+
+	got, err := getOpenAIRequestBodyMap(c, nil)
+	require.NoError(t, err)
+	require.Equal(t, "gpt-5.4", got["model"])
+
+	got["model"] = "gpt-5.2-codex"
+	got["stream"] = true
+
+	cachedValue, ok := c.Get(OpenAIParsedRequestBodyKey)
+	require.True(t, ok)
+	cachedMap, ok := cachedValue.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "gpt-5.4", cachedMap["model"])
+	require.Equal(t, false, cachedMap["stream"])
 }
 
 func TestGetOpenAIRequestBodyMap_ParseErrorWithoutCache(t *testing.T) {
@@ -138,4 +163,6 @@ func TestGetOpenAIRequestBodyMap_WriteBackContextCache(t *testing.T) {
 	cachedMap, ok := cached.(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, got, cachedMap)
+	got["model"] = "mutated-model"
+	require.Equal(t, "gpt-5", cachedMap["model"])
 }

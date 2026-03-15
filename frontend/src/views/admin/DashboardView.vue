@@ -204,6 +204,131 @@
           </div>
         </div>
 
+        <!-- Runtime Cluster Monitor -->
+        <div class="card p-4">
+          <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">集群运行监控</h3>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                每 5 秒自动刷新，最近 {{ runtimeHistory.length }} 个趋势点
+              </p>
+            </div>
+            <button
+              type="button"
+              class="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-700 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white"
+              @click="openOrchestrator"
+            >
+              <Icon name="externalLink" size="sm" :stroke-width="2" />
+              打开批量注册同步后台
+            </button>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p class="text-xs text-gray-500 dark:text-gray-400">活跃连接数</p>
+              <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
+                {{ formatNumber(latestRuntime.totalActiveConnections) }}
+              </p>
+            </div>
+            <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p class="text-xs text-gray-500 dark:text-gray-400">活跃 API Key 数</p>
+              <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
+                {{ formatNumber(latestRuntime.activeApiKeys) }}
+              </p>
+            </div>
+            <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p class="text-xs text-gray-500 dark:text-gray-400">CPU 占用（均值）</p>
+              <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
+                {{ latestRuntime.avgCpu.toFixed(2) }}%
+              </p>
+            </div>
+            <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p class="text-xs text-gray-500 dark:text-gray-400">内存占用（均值）</p>
+              <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
+                {{ latestRuntime.avgMemory.toFixed(2) }}%
+              </p>
+            </div>
+            <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p class="text-xs text-gray-500 dark:text-gray-400">网络进/出速率</p>
+              <p class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">
+                {{ formatBytesPerSecond(latestRuntime.rxRateBytesPerSec) }} / {{ formatBytesPerSecond(latestRuntime.txRateBytesPerSec) }}
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+            <div
+              v-for="node in runtimeNodes"
+              :key="node.node || node.node_name"
+              class="rounded-lg border p-3"
+              :class="node.ok ? 'border-gray-200 dark:border-gray-700' : 'border-red-300 dark:border-red-700'"
+            >
+              <div class="flex items-center justify-between">
+                <p class="text-xs font-semibold text-gray-800 dark:text-gray-200">
+                  {{ node.node_name || node.node || 'unknown' }}
+                </p>
+                <span
+                  class="rounded px-2 py-0.5 text-[11px] font-medium"
+                  :class="
+                    node.ok
+                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                      : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                  "
+                >
+                  {{ node.ok ? 'ONLINE' : 'ERROR' }}
+                </span>
+              </div>
+              <div v-if="node.ok" class="mt-2 space-y-1 text-xs text-gray-600 dark:text-gray-300">
+                <p>连接：{{ formatNumber(node.active_connections || 0) }}</p>
+                <p>CPU：{{ (node.cpu_percent || 0).toFixed(2) }}%</p>
+                <p>内存：{{ (node.memory_percent || 0).toFixed(2) }}%</p>
+                <p>网络：{{ formatBytes(node.network_rx_bytes || 0) }} / {{ formatBytes(node.network_tx_bytes || 0) }}</p>
+              </div>
+              <p v-else class="mt-2 text-xs text-red-600 dark:text-red-400">
+                {{ node.error || 'collect failed' }}
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <h4 class="mb-2 text-xs font-semibold text-gray-700 dark:text-gray-300">连接与活跃 Key 趋势</h4>
+              <div class="h-56">
+                <Line v-if="runtimeCountChartData" :data="runtimeCountChartData" :options="runtimeCountChartOptions" />
+                <div v-else class="flex h-full items-center justify-center text-xs text-gray-500 dark:text-gray-400">
+                  暂无趋势数据
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <h4 class="mb-2 text-xs font-semibold text-gray-700 dark:text-gray-300">CPU / 内存趋势</h4>
+              <div class="h-56">
+                <Line v-if="runtimeResourceChartData" :data="runtimeResourceChartData" :options="runtimePercentChartOptions" />
+                <div v-else class="flex h-full items-center justify-center text-xs text-gray-500 dark:text-gray-400">
+                  暂无趋势数据
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <h4 class="mb-2 text-xs font-semibold text-gray-700 dark:text-gray-300">网络进/出趋势</h4>
+              <div class="h-56">
+                <Line v-if="runtimeNetworkChartData" :data="runtimeNetworkChartData" :options="runtimeNetworkChartOptions" />
+                <div v-else class="flex h-full items-center justify-center text-xs text-gray-500 dark:text-gray-400">
+                  暂无趋势数据
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-3 flex items-center justify-between text-xs">
+            <p v-if="runtimeError" class="text-red-600 dark:text-red-400">{{ runtimeError }}</p>
+            <p v-else class="text-gray-500 dark:text-gray-400">
+              最近更新时间：{{ runtimeLastUpdated ? new Date(runtimeLastUpdated).toLocaleTimeString() : '-' }}
+            </p>
+            <p class="text-gray-500 dark:text-gray-400">刷新间隔：5s</p>
+          </div>
+        </div>
+
         <!-- Charts Section -->
         <div class="space-y-6">
           <!-- Date Range Filter -->
@@ -265,13 +390,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 
 const { t } = useI18n()
 import { adminAPI } from '@/api/admin'
 import type { DashboardStats, TrendDataPoint, ModelStat, UserUsageTrendPoint } from '@/types'
+import type { RuntimeNodeMetric } from '@/api/admin/dashboard'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -317,6 +443,29 @@ const modelStats = ref<ModelStat[]>([])
 const userTrend = ref<UserUsageTrendPoint[]>([])
 let chartLoadSeq = 0
 let usersTrendLoadSeq = 0
+
+interface RuntimeTrendPoint {
+  timestampMs: number
+  label: string
+  totalActiveConnections: number
+  activeApiKeys: number
+  avgCpu: number
+  avgMemory: number
+  totalRxBytes: number
+  totalTxBytes: number
+  rxRateBytesPerSec: number
+  txRateBytesPerSec: number
+}
+
+const RUNTIME_REFRESH_MS = 5000
+const RUNTIME_MAX_POINTS = 60
+
+const runtimeNodes = ref<RuntimeNodeMetric[]>([])
+const runtimeHistory = ref<RuntimeTrendPoint[]>([])
+const runtimeLastUpdated = ref<number | null>(null)
+const runtimeError = ref('')
+let runtimeLoadSeq = 0
+let runtimePollTimer: ReturnType<typeof setInterval> | null = null
 
 // Helper function to format date in local timezone
 const formatLocalDate = (date: Date): string => {
@@ -411,6 +560,195 @@ const lineOptions = computed(() => ({
   }
 }))
 
+const latestRuntime = computed<RuntimeTrendPoint>(() => {
+  return (
+    runtimeHistory.value[runtimeHistory.value.length - 1] || {
+      timestampMs: 0,
+      label: '',
+      totalActiveConnections: 0,
+      activeApiKeys: 0,
+      avgCpu: 0,
+      avgMemory: 0,
+      totalRxBytes: 0,
+      totalTxBytes: 0,
+      rxRateBytesPerSec: 0,
+      txRateBytesPerSec: 0
+    }
+  )
+})
+
+const runtimeBaseChartOptions = computed(() => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: {
+    intersect: false,
+    mode: 'index' as const
+  },
+  plugins: {
+    legend: {
+      position: 'top' as const,
+      labels: {
+        color: chartColors.value.text,
+        usePointStyle: true,
+        pointStyle: 'circle',
+        padding: 12,
+        font: {
+          size: 10
+        }
+      }
+    }
+  },
+  scales: {
+    x: {
+      grid: {
+        color: chartColors.value.grid
+      },
+      ticks: {
+        color: chartColors.value.text,
+        font: {
+          size: 10
+        },
+        maxRotation: 0,
+        minRotation: 0
+      }
+    }
+  }
+}))
+
+const runtimeCountChartData = computed(() => {
+  if (!runtimeHistory.value.length) return null
+  return {
+    labels: runtimeHistory.value.map((point) => point.label),
+    datasets: [
+      {
+        label: '活跃连接',
+        data: runtimeHistory.value.map((point) => point.totalActiveConnections),
+        borderColor: '#2563eb',
+        backgroundColor: '#2563eb1f',
+        tension: 0.25,
+        fill: true
+      },
+      {
+        label: '活跃 API Key',
+        data: runtimeHistory.value.map((point) => point.activeApiKeys),
+        borderColor: '#0d9488',
+        backgroundColor: '#0d94881f',
+        tension: 0.25,
+        fill: true
+      }
+    ]
+  }
+})
+
+const runtimeCountChartOptions = computed(() => ({
+  ...runtimeBaseChartOptions.value,
+  scales: {
+    ...runtimeBaseChartOptions.value.scales,
+    y: {
+      grid: {
+        color: chartColors.value.grid
+      },
+      ticks: {
+        color: chartColors.value.text,
+        font: {
+          size: 10
+        },
+        callback: (value: string | number) => formatNumber(Number(value))
+      }
+    }
+  }
+}))
+
+const runtimeResourceChartData = computed(() => {
+  if (!runtimeHistory.value.length) return null
+  return {
+    labels: runtimeHistory.value.map((point) => point.label),
+    datasets: [
+      {
+        label: 'CPU%',
+        data: runtimeHistory.value.map((point) => Number(point.avgCpu.toFixed(2))),
+        borderColor: '#dc2626',
+        backgroundColor: '#dc26261f',
+        tension: 0.25,
+        fill: true
+      },
+      {
+        label: '内存%',
+        data: runtimeHistory.value.map((point) => Number(point.avgMemory.toFixed(2))),
+        borderColor: '#7c3aed',
+        backgroundColor: '#7c3aed1f',
+        tension: 0.25,
+        fill: true
+      }
+    ]
+  }
+})
+
+const runtimePercentChartOptions = computed(() => ({
+  ...runtimeBaseChartOptions.value,
+  scales: {
+    ...runtimeBaseChartOptions.value.scales,
+    y: {
+      min: 0,
+      max: 100,
+      grid: {
+        color: chartColors.value.grid
+      },
+      ticks: {
+        color: chartColors.value.text,
+        font: {
+          size: 10
+        },
+        callback: (value: string | number) => `${Number(value).toFixed(0)}%`
+      }
+    }
+  }
+}))
+
+const runtimeNetworkChartData = computed(() => {
+  if (!runtimeHistory.value.length) return null
+  return {
+    labels: runtimeHistory.value.map((point) => point.label),
+    datasets: [
+      {
+        label: '网络入',
+        data: runtimeHistory.value.map((point) => Number((point.rxRateBytesPerSec / (1024 * 1024)).toFixed(4))),
+        borderColor: '#16a34a',
+        backgroundColor: '#16a34a1f',
+        tension: 0.25,
+        fill: true
+      },
+      {
+        label: '网络出',
+        data: runtimeHistory.value.map((point) => Number((point.txRateBytesPerSec / (1024 * 1024)).toFixed(4))),
+        borderColor: '#f97316',
+        backgroundColor: '#f973161f',
+        tension: 0.25,
+        fill: true
+      }
+    ]
+  }
+})
+
+const runtimeNetworkChartOptions = computed(() => ({
+  ...runtimeBaseChartOptions.value,
+  scales: {
+    ...runtimeBaseChartOptions.value.scales,
+    y: {
+      grid: {
+        color: chartColors.value.grid
+      },
+      ticks: {
+        color: chartColors.value.text,
+        font: {
+          size: 10
+        },
+        callback: (value: string | number) => `${Number(value).toFixed(2)} MB/s`
+      }
+    }
+  }
+}))
+
 // User trend chart data
 const userTrendChartData = computed(() => {
   if (!userTrend.value?.length) return null
@@ -484,6 +822,22 @@ const formatNumber = (value: number): string => {
   return value.toLocaleString()
 }
 
+const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = bytes
+  let idx = 0
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024
+    idx += 1
+  }
+  return `${size.toFixed(size >= 10 || idx === 0 ? 0 : 2)} ${units[idx]}`
+}
+
+const formatBytesPerSecond = (bytesPerSec: number): string => {
+  return `${formatBytes(bytesPerSec)}/s`
+}
+
 const formatCost = (value: number): string => {
   if (value >= 1000) {
     return (value / 1000).toFixed(2) + 'K'
@@ -500,6 +854,94 @@ const formatDuration = (ms: number): string => {
     return `${(ms / 1000).toFixed(2)}s`
   }
   return `${Math.round(ms)}ms`
+}
+
+const openOrchestrator = () => {
+  window.open('https://vip.rshan.cc:9443/', '_blank', 'noopener,noreferrer')
+}
+
+const buildRuntimePoint = (
+  nodes: RuntimeNodeMetric[],
+  activeApiKeys: number,
+  timestampMs: number
+): RuntimeTrendPoint => {
+  const validNodes = nodes.filter((node) => node.ok)
+  const divisor = validNodes.length > 0 ? validNodes.length : 1
+
+  const totalActiveConnections = validNodes.reduce(
+    (sum, node) => sum + (node.active_connections || 0),
+    0
+  )
+  const avgCpu =
+    validNodes.reduce((sum, node) => sum + (node.cpu_percent || 0), 0) / divisor
+  const avgMemory =
+    validNodes.reduce((sum, node) => sum + (node.memory_percent || 0), 0) / divisor
+  const totalRxBytes = validNodes.reduce(
+    (sum, node) => sum + (node.network_rx_bytes || 0),
+    0
+  )
+  const totalTxBytes = validNodes.reduce(
+    (sum, node) => sum + (node.network_tx_bytes || 0),
+    0
+  )
+
+  return {
+    timestampMs,
+    label: new Date(timestampMs).toLocaleTimeString(),
+    totalActiveConnections,
+    activeApiKeys: activeApiKeys || 0,
+    avgCpu,
+    avgMemory,
+    totalRxBytes,
+    totalTxBytes,
+    rxRateBytesPerSec: 0,
+    txRateBytesPerSec: 0
+  }
+}
+
+const loadRuntimeClusterMetrics = async () => {
+  const currentSeq = ++runtimeLoadSeq
+  try {
+    const response = await adminAPI.dashboard.getRuntimeClusterMetrics()
+    if (currentSeq !== runtimeLoadSeq) return
+
+    const nodes = response.nodes || []
+    runtimeNodes.value = nodes
+
+    const timestampMs = (response.timestamp || Math.floor(Date.now() / 1000)) * 1000
+    const point = buildRuntimePoint(nodes, response.active_api_keys || 0, timestampMs)
+    const previous = runtimeHistory.value[runtimeHistory.value.length - 1]
+    if (previous) {
+      const secondsDiff = Math.max((point.timestampMs - previous.timestampMs) / 1000, 1)
+      point.rxRateBytesPerSec = Math.max(point.totalRxBytes - previous.totalRxBytes, 0) / secondsDiff
+      point.txRateBytesPerSec = Math.max(point.totalTxBytes - previous.totalTxBytes, 0) / secondsDiff
+    }
+
+    runtimeHistory.value = [...runtimeHistory.value, point].slice(-RUNTIME_MAX_POINTS)
+    runtimeLastUpdated.value = timestampMs
+    runtimeError.value = ''
+  } catch (error) {
+    if (currentSeq !== runtimeLoadSeq) return
+    runtimeError.value = '集群运行指标拉取失败'
+    console.error('Error loading runtime cluster metrics:', error)
+  }
+}
+
+const startRuntimePolling = () => {
+  void loadRuntimeClusterMetrics()
+  if (runtimePollTimer) {
+    clearInterval(runtimePollTimer)
+  }
+  runtimePollTimer = setInterval(() => {
+    void loadRuntimeClusterMetrics()
+  }, RUNTIME_REFRESH_MS)
+}
+
+const stopRuntimePolling = () => {
+  if (runtimePollTimer) {
+    clearInterval(runtimePollTimer)
+    runtimePollTimer = null
+  }
 }
 
 // Date range change handler
@@ -593,7 +1035,12 @@ const loadChartData = async () => {
 }
 
 onMounted(() => {
-  loadDashboardStats()
+  void loadDashboardStats()
+  startRuntimePolling()
+})
+
+onBeforeUnmount(() => {
+  stopRuntimePolling()
 })
 </script>
 

@@ -1,8 +1,14 @@
 package admin
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +16,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/shirou/gopsutil/v4/cpu"
+	gopsutilmem "github.com/shirou/gopsutil/v4/mem"
+	gopsutilnet "github.com/shirou/gopsutil/v4/net"
 
 	"github.com/gin-gonic/gin"
 )
@@ -184,6 +193,220 @@ func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
 		"average_response_time": 0,
 		"error_rate":            0.0,
 	})
+}
+
+type dashboardRuntimeNodeMetric struct {
+	Node              string  `json:"node"`
+	NodeName          string  `json:"node_name"`
+	Timestamp         int64   `json:"timestamp"`
+	ActiveConnections int64   `json:"active_connections"`
+	ActiveAPIKeys     int64   `json:"active_api_keys"`
+	CPUPercent        float64 `json:"cpu_percent"`
+	MemoryPercent     float64 `json:"memory_percent"`
+	MemoryUsedBytes   uint64  `json:"memory_used_bytes"`
+	MemoryTotalBytes  uint64  `json:"memory_total_bytes"`
+	NetworkRxBytes    uint64  `json:"network_rx_bytes"`
+	NetworkTxBytes    uint64  `json:"network_tx_bytes"`
+	OK                bool    `json:"ok"`
+	Error             string  `json:"error,omitempty"`
+}
+
+type dashboardRuntimeResponseEnvelope struct {
+	Code    int                        `json:"code"`
+	Message string                     `json:"message"`
+	Data    dashboardRuntimeNodeMetric `json:"data"`
+}
+
+// GetRuntimeLocal returns local node runtime metrics for admin dashboard cluster aggregation.
+// GET /api/v1/admin/dashboard/runtime-local
+func (h *DashboardHandler) GetRuntimeLocal(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	hostname := os.Getenv("HOSTNAME")
+	if strings.TrimSpace(hostname) == "" {
+		if hn, err := os.Hostname(); err == nil {
+			hostname = hn
+		}
+	}
+
+	var (
+		cpuPercent       float64
+		memoryPercent    float64
+		memoryUsedBytes  uint64
+		memoryTotalBytes uint64
+		networkRxBytes   uint64
+		networkTxBytes   uint64
+		activeConns      int64
+		activeAPIKeys    int64
+	)
+
+	if percents, err := cpu.PercentWithContext(ctx, 0, false); err == nil && len(percents) > 0 {
+		cpuPercent = roundTo2DP(percents[0])
+	}
+
+	if vm, err := gopsutilmem.VirtualMemoryWithContext(ctx); err == nil && vm != nil {
+		memoryPercent = roundTo2DP(vm.UsedPercent)
+		memoryUsedBytes = vm.Used
+		memoryTotalBytes = vm.Total
+	}
+
+	if ioStats, err := gopsutilnet.IOCountersWithContext(ctx, false); err == nil && len(ioStats) > 0 {
+		networkRxBytes = ioStats[0].BytesRecv
+		networkTxBytes = ioStats[0].BytesSent
+	}
+
+	// Count established inbound TCP connections to app port 8080.
+	if conns, err := gopsutilnet.ConnectionsWithContext(ctx, "tcp"); err == nil {
+		for i := range conns {
+			conn := conns[i]
+			if conn.Laddr.Port == 8080 && strings.EqualFold(strings.TrimSpace(conn.Status), "ESTABLISHED") {
+				activeConns++
+			}
+		}
+	}
+
+	if stats, err := h.dashboardService.GetDashboardStats(ctx); err == nil {
+		activeAPIKeys = stats.ActiveAPIKeys
+	}
+
+	response.Success(c, dashboardRuntimeNodeMetric{
+		NodeName:          strings.TrimSpace(hostname),
+		Timestamp:         time.Now().Unix(),
+		ActiveConnections: activeConns,
+		ActiveAPIKeys:     activeAPIKeys,
+		CPUPercent:        cpuPercent,
+		MemoryPercent:     memoryPercent,
+		MemoryUsedBytes:   memoryUsedBytes,
+		MemoryTotalBytes:  memoryTotalBytes,
+		NetworkRxBytes:    networkRxBytes,
+		NetworkTxBytes:    networkTxBytes,
+		OK:                true,
+	})
+}
+
+// GetRuntimeCluster aggregates runtime metrics from cluster nodes for dashboard charts.
+// GET /api/v1/admin/dashboard/runtime-cluster
+func (h *DashboardHandler) GetRuntimeCluster(c *gin.Context) {
+	ctx := c.Request.Context()
+	nodes := resolveDashboardClusterNodes()
+	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
+
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // internal admin query
+		},
+	}
+
+	out := make([]dashboardRuntimeNodeMetric, 0, len(nodes))
+	var latestActiveAPIKeys int64
+	for i := range nodes {
+		node := nodes[i]
+		metric, err := fetchDashboardRuntimeNode(ctx, client, node, authHeader)
+		if err != nil {
+			out = append(out, dashboardRuntimeNodeMetric{
+				Node:      node,
+				Timestamp: time.Now().Unix(),
+				OK:        false,
+				Error:     err.Error(),
+			})
+			continue
+		}
+		if strings.TrimSpace(metric.Node) == "" {
+			metric.Node = node
+		}
+		metric.OK = true
+		if metric.ActiveAPIKeys > 0 {
+			latestActiveAPIKeys = metric.ActiveAPIKeys
+		}
+		out = append(out, metric)
+	}
+
+	if latestActiveAPIKeys == 0 {
+		if stats, err := h.dashboardService.GetDashboardStats(ctx); err == nil {
+			latestActiveAPIKeys = stats.ActiveAPIKeys
+		}
+	}
+
+	response.Success(c, gin.H{
+		"timestamp":             time.Now().Unix(),
+		"active_api_keys":       latestActiveAPIKeys,
+		"refresh_interval_secs": 5,
+		"nodes":                 out,
+	})
+}
+
+func resolveDashboardClusterNodes() []string {
+	raw := strings.TrimSpace(os.Getenv("DASHBOARD_CLUSTER_NODES"))
+	if raw == "" {
+		return []string{"38.175.200.213", "38.175.200.245", "38.175.200.178"}
+	}
+
+	parts := strings.Split(raw, ",")
+	seen := make(map[string]struct{}, len(parts))
+	nodes := make([]string, 0, len(parts))
+	for i := range parts {
+		node := strings.TrimSpace(parts[i])
+		if node == "" {
+			continue
+		}
+		if _, ok := seen[node]; ok {
+			continue
+		}
+		seen[node] = struct{}{}
+		nodes = append(nodes, node)
+	}
+	if len(nodes) == 0 {
+		return []string{"38.175.200.213", "38.175.200.245", "38.175.200.178"}
+	}
+	return nodes
+}
+
+func fetchDashboardRuntimeNode(
+	ctx context.Context,
+	client *http.Client,
+	node string,
+	authHeader string,
+) (dashboardRuntimeNodeMetric, error) {
+	url := fmt.Sprintf("https://%s/api/v1/admin/dashboard/runtime-local", strings.TrimSpace(node))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return dashboardRuntimeNodeMetric{}, err
+	}
+	if authHeader != "" {
+		req.Header.Set("Authorization", authHeader)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return dashboardRuntimeNodeMetric{}, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return dashboardRuntimeNodeMetric{}, fmt.Errorf("http %d", resp.StatusCode)
+	}
+
+	var envelope dashboardRuntimeResponseEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return dashboardRuntimeNodeMetric{}, err
+	}
+	if envelope.Code != 0 {
+		msg := strings.TrimSpace(envelope.Message)
+		if msg == "" {
+			msg = "invalid response"
+		}
+		return dashboardRuntimeNodeMetric{}, errors.New(msg)
+	}
+	return envelope.Data, nil
+}
+
+func roundTo2DP(v float64) float64 {
+	if v == 0 {
+		return 0
+	}
+	return float64(int(v*100+0.5)) / 100
 }
 
 // GetUsageTrend handles getting usage trend data

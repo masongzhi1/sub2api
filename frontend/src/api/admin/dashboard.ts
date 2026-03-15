@@ -245,6 +245,29 @@ export interface BatchApiKeysUsageResponse {
   stats: Record<string, BatchApiKeyUsageStats>
 }
 
+export interface RuntimeNodeMetric {
+  node: string
+  node_name: string
+  timestamp: number
+  active_connections: number
+  active_api_keys: number
+  cpu_percent: number
+  memory_percent: number
+  memory_used_bytes: number
+  memory_total_bytes: number
+  network_rx_bytes: number
+  network_tx_bytes: number
+  ok: boolean
+  error?: string
+}
+
+export interface RuntimeClusterMetricsResponse {
+  timestamp: number
+  active_api_keys: number
+  refresh_interval_secs: number
+  nodes: RuntimeNodeMetric[]
+}
+
 /**
  * Get batch usage stats for multiple API keys
  * @param apiKeyIds - Array of API key IDs
@@ -262,6 +285,16 @@ export async function getBatchApiKeysUsage(
   return data
 }
 
+/**
+ * Get cluster runtime metrics for dashboard monitoring cards/charts.
+ */
+export async function getRuntimeClusterMetrics(): Promise<RuntimeClusterMetricsResponse> {
+  const { data } = await apiClient.get<RuntimeClusterMetricsResponse>(
+    '/admin/dashboard/runtime-cluster'
+  )
+  return data
+}
+
 export const dashboardAPI = {
   getStats,
   getRealtimeMetrics,
@@ -272,7 +305,8 @@ export const dashboardAPI = {
   getApiKeyUsageTrend,
   getUserUsageTrend,
   getBatchUsersUsage,
-  getBatchApiKeysUsage
+  getBatchApiKeysUsage,
+  getRuntimeClusterMetrics
 }
 
 export default dashboardAPI

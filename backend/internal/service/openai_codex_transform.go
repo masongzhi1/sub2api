@@ -210,6 +210,60 @@ func normalizeCodexModel(model string) string {
 	return "gpt-5.1"
 }
 
+// IsOpenAIRequestModelMappable reports whether a user-specified model can be
+// mapped into the supported Codex family for billing + upstream routing.
+func IsOpenAIRequestModelMappable(model string) bool {
+	modelID := strings.TrimSpace(model)
+	if modelID == "" {
+		return false
+	}
+	if strings.Contains(modelID, "/") {
+		parts := strings.Split(modelID, "/")
+		modelID = strings.TrimSpace(parts[len(parts)-1])
+	}
+	if modelID == "" {
+		return false
+	}
+
+	if getNormalizedCodexModel(modelID) != "" {
+		return true
+	}
+
+	normalized := strings.ToLower(modelID)
+	// Keep fuzzy aliases consistent with normalizeCodexModel, but do not fall
+	// back unconditionally so unknown models can be rejected explicitly.
+	switch {
+	case strings.Contains(normalized, "gpt-5.4"), strings.Contains(normalized, "gpt 5.4"):
+		return true
+	case strings.Contains(normalized, "gpt-5.2-codex"), strings.Contains(normalized, "gpt 5.2 codex"):
+		return true
+	case strings.Contains(normalized, "gpt-5.2"), strings.Contains(normalized, "gpt 5.2"):
+		return true
+	case strings.Contains(normalized, "gpt-5.3-codex"), strings.Contains(normalized, "gpt 5.3 codex"):
+		return true
+	case strings.Contains(normalized, "gpt-5.3"), strings.Contains(normalized, "gpt 5.3"):
+		return true
+	case strings.Contains(normalized, "gpt-5.1-codex-max"), strings.Contains(normalized, "gpt 5.1 codex max"):
+		return true
+	case strings.Contains(normalized, "gpt-5.1-codex-mini"), strings.Contains(normalized, "gpt 5.1 codex mini"):
+		return true
+	case strings.Contains(normalized, "codex-mini-latest"), strings.Contains(normalized, "gpt-5-codex-mini"), strings.Contains(normalized, "gpt 5 codex mini"):
+		return true
+	case strings.Contains(normalized, "gpt-5.1-codex"), strings.Contains(normalized, "gpt 5.1 codex"):
+		return true
+	case strings.Contains(normalized, "gpt-5.1"), strings.Contains(normalized, "gpt 5.1"):
+		return true
+	case strings.Contains(normalized, "gpt-5-codex"), strings.Contains(normalized, "gpt 5 codex"):
+		return true
+	case strings.Contains(normalized, "gpt-5"), strings.Contains(normalized, "gpt 5"):
+		return true
+	case strings.Contains(normalized, "codex"):
+		return true
+	default:
+		return false
+	}
+}
+
 func getNormalizedCodexModel(modelID string) string {
 	if modelID == "" {
 		return ""

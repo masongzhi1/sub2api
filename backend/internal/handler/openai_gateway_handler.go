@@ -147,6 +147,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	if !service.IsOpenAIRequestModelMappable(reqModel) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", buildUnsupportedModelMessage(reqModel))
+		return
+	}
 
 	streamResult := gjson.GetBytes(body, "stream")
 	if streamResult.Exists() && streamResult.Type != gjson.True && streamResult.Type != gjson.False {
@@ -173,6 +177,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	setOpsRequestContext(c, reqModel, reqStream, body)
+	if !h.isOpenAIRequestedModelAllowed(c.Request.Context(), apiKey.GroupID, reqModel) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", buildUnsupportedModelMessage(reqModel))
+		return
+	}
 
 	// 提前校验 function_call_output 是否具备可关联上下文，避免上游 400。
 	if !h.validateFunctionCallOutputRequest(c, body, reqLog) {
@@ -234,6 +242,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				if isModelUnsupportedSelectionErr(err) {
+					h.handleStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", buildUnsupportedModelMessage(reqModel), streamStarted)
+					return
+				}
 				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
 				return
 			}
@@ -531,6 +543,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
 	setOpsRequestContext(c, reqModel, reqStream, body)
+	if !h.isOpenAIRequestedModelAllowed(c.Request.Context(), apiKey.GroupID, reqModel) {
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", buildUnsupportedModelMessage(reqModel))
+		return
+	}
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
 	if h.errorPassthroughService != nil {
@@ -586,6 +602,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			)
 			// 首次调度失败 + 有默认映射模型 → 用默认模型重试
 			if len(failedAccountIDs) == 0 {
+				if isModelUnsupportedSelectionErr(err) {
+					h.anthropicStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", buildUnsupportedModelMessage(reqModel), streamStarted)
+					return
+				}
 				defaultModel := ""
 				if apiKey.Group != nil {
 					defaultModel = apiKey.Group.DefaultMappedModel
@@ -1067,6 +1087,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		zap.Bool("has_previous_response_id", previousResponseID != ""),
 		zap.String("previous_response_id_kind", previousResponseIDKind),
 	)
+	if !h.isOpenAIRequestedModelAllowed(ctx, apiKey.GroupID, reqModel) {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, buildUnsupportedModelMessage(reqModel))
+		return
+	}
 	setOpsRequestContext(c, reqModel, true, firstMessage)
 
 	var currentUserRelease func()
@@ -1119,6 +1143,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	)
 	if err != nil {
 		reqLog.Warn("openai.websocket_account_select_failed", zap.Error(err))
+		if isModelUnsupportedSelectionErr(err) {
+			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, buildUnsupportedModelMessage(reqModel))
+			return
+		}
 		closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
 		return
 	}
@@ -1440,6 +1468,34 @@ func (h *OpenAIGatewayHandler) mapUpstreamError(statusCode int) (int, string, st
 	default:
 		return http.StatusBadGateway, "upstream_error", "Upstream request failed"
 	}
+}
+
+func isModelUnsupportedSelectionErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(msg, "supporting model")
+}
+
+func buildUnsupportedModelMessage(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return "Model not supported"
+	}
+	return fmt.Sprintf("Model not supported: %s", trimmed)
+}
+
+func (h *OpenAIGatewayHandler) isOpenAIRequestedModelAllowed(ctx context.Context, groupID *int64, requestedModel string) bool {
+	model := strings.TrimSpace(requestedModel)
+	if model == "" || h == nil || h.gatewayService == nil {
+		return true
+	}
+	allowed, err := h.gatewayService.IsRequestedModelSupported(ctx, groupID, model)
+	if err != nil {
+		return true
+	}
+	return allowed
 }
 
 // handleStreamingAwareError handles errors that may occur after streaming has started

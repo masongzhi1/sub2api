@@ -1204,7 +1204,7 @@ func crsExportAccounts(ctx context.Context, client *http.Client, baseURL, adminT
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("crs export failed: status=%d body=%s", resp.StatusCode, string(raw))
 	}

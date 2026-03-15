@@ -2,6 +2,7 @@ package service
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -52,13 +53,13 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		responsesReq.ServiceTier = "priority"
 	}
 
-	// 3. Model mapping
-	mappedModel := account.GetMappedModel(originalModel)
-	// 分组级降级：账号未映射时使用分组默认映射模型
-	if mappedModel == originalModel && defaultMappedModel != "" {
-		mappedModel = defaultMappedModel
-	}
+	// 3. Force upstream model and reasoning
+	mappedModel := forcedOpenAIUpstreamModel
 	responsesReq.Model = mappedModel
+	if responsesReq.Reasoning == nil {
+		responsesReq.Reasoning = &apicompat.ResponsesReasoning{}
+	}
+	responsesReq.Reasoning.Effort = forcedOpenAIUpstreamReasoningEffort
 
 	logger.L().Debug("openai messages: model mapping applied",
 		zap.Int64("account_id", account.ID),
@@ -269,7 +270,21 @@ func (s *OpenAIGatewayService) handleAnthropicNonStreamingResponse(
 
 	var responsesResp apicompat.ResponsesResponse
 	if err := json.Unmarshal(respBody, &responsesResp); err != nil {
-		return nil, fmt.Errorf("parse responses response: %w", err)
+		// Some upstreams may return SSE even for non-stream requests.
+		// Attempt to extract terminal response payload from SSE before failing.
+		bodyLooksLikeSSE := bytes.Contains(respBody, []byte("data:")) || bytes.Contains(respBody, []byte("event:"))
+		if isEventStreamResponse(resp.Header) || bodyLooksLikeSSE {
+			if finalResponse, ok := extractCodexFinalResponse(string(respBody)); ok {
+				if err2 := json.Unmarshal(finalResponse, &responsesResp); err2 == nil {
+					err = nil
+				} else {
+					return nil, fmt.Errorf("parse responses response from sse terminal event: %w", err2)
+				}
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse responses response: %w", err)
+		}
 	}
 
 	anthropicResp := apicompat.ResponsesToAnthropic(&responsesResp, originalModel)
@@ -294,7 +309,7 @@ func (s *OpenAIGatewayService) handleAnthropicNonStreamingResponse(
 		RequestID:    requestID,
 		Usage:        usage,
 		Model:        originalModel,
-		BillingModel: mappedModel,
+		BillingModel: originalModel,
 		Stream:       false,
 		Duration:     time.Since(startTime),
 	}, nil
@@ -384,7 +399,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					RequestID:    requestID,
 					Usage:        usage,
 					Model:        originalModel,
-					BillingModel: mappedModel,
+					BillingModel: originalModel,
 					Stream:       true,
 					Duration:     time.Since(startTime),
 					FirstTokenMs: firstTokenMs,
@@ -421,7 +436,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		RequestID:    requestID,
 		Usage:        usage,
 		Model:        originalModel,
-		BillingModel: mappedModel,
+		BillingModel: originalModel,
 		Stream:       true,
 		Duration:     time.Since(startTime),
 		FirstTokenMs: firstTokenMs,

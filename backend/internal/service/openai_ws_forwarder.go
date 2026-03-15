@@ -2493,17 +2493,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			normalized = next
 		}
-		mappedModel := account.GetMappedModel(originalModel)
-		if normalizedModel := normalizeCodexModel(mappedModel); normalizedModel != "" {
-			mappedModel = normalizedModel
+		enforcedPayload, _, enforceErr := enforceOpenAIUpstreamRequestBytes(normalized)
+		if enforceErr != nil {
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", enforceErr)
 		}
-		if mappedModel != originalModel {
-			next, setErr := applyPayloadMutation(normalized, "model", mappedModel)
-			if setErr != nil {
-				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", setErr)
-			}
-			normalized = next
-		}
+		normalized = enforcedPayload
 
 		return openAIWSClientPayload{
 			payloadRaw:         normalized,
@@ -2751,13 +2745,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		lastEventType := ""
 		needModelReplace := false
 		clientDisconnected := false
-		mappedModel := ""
+		mappedModel := forcedOpenAIUpstreamModel
 		var mappedModelBytes []byte
 		if originalModel != "" {
-			mappedModel = account.GetMappedModel(originalModel)
-			if normalizedModel := normalizeCodexModel(mappedModel); normalizedModel != "" {
-				mappedModel = normalizedModel
-			}
 			needModelReplace = mappedModel != "" && mappedModel != originalModel
 			if needModelReplace {
 				mappedModelBytes = []byte(mappedModel)
